@@ -1,0 +1,696 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Smart Drainage Monitoring System</title>
+  <!-- Chart.js 4.4.1 from jsDelivr CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <style>
+    /* ---- Theme variables (light mode is the default) ---- */
+    :root {
+      --bg:          #eef1f5;
+      --card:        #ffffff;
+      --text:        #1e293b;
+      --text-muted:  #64748b;
+      --border:      #cbd5e1;
+      --water:       #3b82f6;
+      --normal:      #16a34a;
+      --warning:     #d97706;
+      --blockage:    #dc2626;
+      --critical:    #b91c1c;
+      --font:        -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+                     Helvetica, Arial, sans-serif;
+    }
+
+    /* ---- Dark mode (follows the OS setting automatically) ---- */
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg:         #0f172a;
+        --card:       #1e293b;
+        --text:       #e2e8f0;
+        --text-muted: #94a3b8;
+        --border:     #334155;
+      }
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: var(--font);
+      background: var(--bg);
+      color: var(--text);
+      padding: 16px;
+      max-width: 1100px;
+      margin: 0 auto;
+      line-height: 1.5;
+    }
+
+    /* ---- Header ---- */
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    header h1 {
+      font-size: 1.25rem;
+      font-weight: 600;
+    }
+    #connection-status {
+      font-size: 0.875rem;
+      color: var(--text-muted);
+    }
+    #connection-status.live    { color: var(--normal); }
+    #connection-status.offline { color: var(--critical); font-weight: 600; }
+
+    /* ---- Status banner ---- */
+    #status-banner {
+      background: var(--card);
+      border-left: 4px solid var(--normal);
+      border-radius: 6px;
+      padding: 16px;
+      margin-bottom: 16px;
+    }
+    #status-banner.warning  { border-left-color: var(--warning); }
+    #status-banner.blockage  { border-left-color: var(--blockage); }
+    #status-banner.critical  { border-left-color: var(--critical); }
+    #status-title {
+      font-size: 1.1rem;
+      font-weight: 600;
+      margin-bottom: 8px;
+    }
+    #status-reasons {
+      list-style: disc;
+      padding-left: 20px;
+      margin-bottom: 8px;
+    }
+    #status-reasons li {
+      font-size: 0.875rem;
+      color: var(--text-muted);
+      margin-bottom: 2px;
+    }
+    #status-eta {
+      font-size: 0.875rem;
+      color: var(--warning);
+      font-weight: 500;
+    }
+
+    /* ---- SVG channel section ---- */
+    #channel-section {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 16px;
+      margin-bottom: 16px;
+    }
+    #channel-section h3 {
+      font-size: 0.875rem;
+      color: var(--text-muted);
+      margin-bottom: 8px;
+      font-weight: 500;
+    }
+    #channel-svg {
+      width: 100%;
+      height: auto;
+      display: block;
+    }
+
+    /* SVG element styles */
+    .wall     { fill: none; stroke: var(--border); stroke-width: 2; }
+    .wall.overflow { stroke: var(--critical); }
+    .water    { fill: var(--water); }
+    .connector { fill: var(--border); opacity: 0.25; }
+    .connector.warning { fill: var(--warning); opacity: 0.55; }
+    .connector.danger  { fill: var(--blockage); opacity: 0.55; }
+    .overflow-line { stroke: var(--critical); stroke-dasharray: 6 4; stroke-width: 1.5; }
+    .ch-top-line   { stroke: var(--text-muted); stroke-dasharray: 3 3; stroke-width: 1; opacity: 0.4; }
+    .s-label  { font-size: 13px; fill: var(--text); font-weight: 600; font-family: var(--font); }
+    .s-depth  { font-size: 12px; fill: var(--text-muted); font-family: var(--font); }
+    .s-small  { font-size: 10px; fill: var(--text-muted); font-family: var(--font); }
+    .s-seg    { font-size: 10px; fill: var(--warning); font-weight: 600; font-family: var(--font); }
+    .s-seg.danger { fill: var(--blockage); }
+
+    /* ---- Number cards ---- */
+    #cards {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 12px 16px;
+    }
+    .card-label {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      display: block;
+    }
+    .card-value {
+      font-size: 1.5rem;
+      font-weight: 600;
+    }
+    .card-unit {
+      font-size: 0.875rem;
+      color: var(--text-muted);
+    }
+
+    /* ---- Charts ---- */
+    #charts {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin-bottom: 16px;
+    }
+    .chart-box {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 12px;
+    }
+    .chart-box h3 {
+      font-size: 0.875rem;
+      color: var(--text-muted);
+      margin-bottom: 8px;
+      font-weight: 500;
+    }
+    .chart-wrap {
+      position: relative;
+      height: 200px;
+    }
+    .chart-msg {
+      font-size: 0.875rem;
+      color: var(--text-muted);
+      padding: 20px;
+      text-align: center;
+    }
+
+    /* ---- Alert log table ---- */
+    #alerts-section {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 16px;
+    }
+    #alerts-section h3 {
+      font-size: 0.875rem;
+      color: var(--text-muted);
+      margin-bottom: 8px;
+      font-weight: 500;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    th, td {
+      text-align: left;
+      padding: 8px;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.875rem;
+    }
+    th {
+      color: var(--text-muted);
+      font-weight: 500;
+    }
+    .level-warning  { color: var(--warning); font-weight: 600; }
+    .level-blockage { color: var(--blockage); font-weight: 600; }
+    .level-critical { color: var(--critical); font-weight: 600; }
+    .level-normal   { color: var(--normal); }
+
+    /* ---- Responsive ---- */
+    @media (max-width: 768px) {
+      #cards  { grid-template-columns: 1fr; }
+      #charts { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Smart Drainage Monitoring System</h1>
+    <span id="connection-status">Connecting...</span>
+  </header>
+
+  <!-- Status banner -->
+  <div id="status-banner">
+    <div id="status-title">Waiting for sensor data</div>
+    <ul id="status-reasons"></ul>
+    <div id="status-eta"></div>
+  </div>
+
+  <!-- SVG channel drawing -->
+  <div id="channel-section">
+    <h3>Channel view (left to right: upstream to downstream)</h3>
+    <svg id="channel-svg" viewBox="0 0 720 380" xmlns="http://www.w3.org/2000/svg"
+         role="img" aria-label="Drainage channel diagram">
+      <!-- Flow direction label -->
+      <text x="360" y="20" text-anchor="middle" class="s-small">flow direction</text>
+      <text x="690" y="20" text-anchor="end" class="s-small">></text>
+
+      <!-- Channel top line (dashed) -->
+      <line id="ch-top" class="ch-top-line" x1="40" y1="70" x2="680" y2="70"/>
+      <text id="ch-top-label" x="675" y="66" text-anchor="end" class="s-small">channel top</text>
+
+      <!-- Overflow line (dashed red) -->
+      <line id="overflow-line" class="overflow-line" x1="40" y1="118" x2="680" y2="118"/>
+      <text id="overflow-label" x="675" y="114" text-anchor="end" class="s-small">overflow level</text>
+
+      <!-- Connector segments (behind columns) -->
+      <rect id="seg-ab" class="connector" x="160" y="270" width="130" height="40" rx="2"/>
+      <rect id="seg-bc" class="connector" x="390" y="270" width="130" height="40" rx="2"/>
+      <rect id="seg-ac" class="connector" x="620" y="270" width="60"  height="40" rx="2"/>
+
+      <!-- Segment labels -->
+      <text id="seg-label-ab" class="s-seg" x="225" y="262" text-anchor="middle"></text>
+      <text id="seg-label-bc" class="s-seg" x="455" y="262" text-anchor="middle"></text>
+      <text id="seg-label-ac" class="s-seg" x="650" y="262" text-anchor="middle"></text>
+
+      <!-- Column A (upstream) -->
+      <rect id="col-a" class="wall" x="60"  y="70" width="100" height="240" rx="4"/>
+      <rect id="water-a" class="water" x="62" width="96" rx="2"/>
+      <text x="110" y="328" text-anchor="middle" class="s-label">Point A</text>
+      <text id="depth-a" x="110" y="348" text-anchor="middle" class="s-depth">-- cm</text>
+
+      <!-- Column B (midstream) -->
+      <rect id="col-b" class="wall" x="290" y="70" width="100" height="240" rx="4"/>
+      <rect id="water-b" class="water" x="292" width="96" rx="2"/>
+      <text x="340" y="328" text-anchor="middle" class="s-label">Point B</text>
+      <text id="depth-b" x="340" y="348" text-anchor="middle" class="s-depth">-- cm</text>
+
+      <!-- Column C (downstream) -->
+      <rect id="col-c" class="wall" x="520" y="70" width="100" height="240" rx="4"/>
+      <rect id="water-c" class="water" x="522" width="96" rx="2"/>
+      <text x="570" y="328" text-anchor="middle" class="s-label">Point C</text>
+      <text id="depth-c" x="570" y="348" text-anchor="middle" class="s-depth">-- cm</text>
+    </svg>
+  </div>
+
+  <!-- Number cards -->
+  <div id="cards">
+    <div class="card">
+      <span class="card-label">Flow</span>
+      <span class="card-value" id="card-flow">--</span>
+      <span class="card-unit">L/min</span>
+    </div>
+    <div class="card">
+      <span class="card-label">Water temperature</span>
+      <span class="card-value" id="card-temp">--</span>
+      <span class="card-unit">&deg;C</span>
+    </div>
+    <div class="card">
+      <span class="card-label">Time to overflow</span>
+      <span class="card-value" id="card-eta">--</span>
+      <span class="card-unit">min</span>
+    </div>
+  </div>
+
+  <!-- Charts -->
+  <div id="charts">
+    <div class="chart-box">
+      <h3>Water depth over time (cm)</h3>
+      <div class="chart-wrap">
+        <canvas id="depth-chart"></canvas>
+      </div>
+    </div>
+    <div class="chart-box">
+      <h3>Flow rate over time (L/min)</h3>
+      <div class="chart-wrap">
+        <canvas id="flow-chart"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <!-- Alert log -->
+  <div id="alerts-section">
+    <h3>Alert log</h3>
+    <table>
+      <thead>
+        <tr><th>Time</th><th>Level</th><th>Details</th></tr>
+      </thead>
+      <tbody id="alert-body">
+        <tr><td colspan="3">No alerts yet</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <script>
+    /* ============================================================
+       Smart Drainage Monitoring System - Dashboard JavaScript
+       Polls the API every 3 seconds and updates the UI.
+       ============================================================ */
+
+    var REFRESH_MS = 3000;
+    var SVG_SCALE = 16;      // pixels per cm in the SVG
+    var SVG_BOTTOM = 310;    // y-coordinate of the channel floor
+    var config = null;
+    var depthChart = null;
+    var flowChart = null;
+    var chartsReady = (typeof Chart !== "undefined");
+
+    // Human-readable location text for the status banner
+    var LOC_TEXT = {
+      "A-B":     "between points A and B",
+      "B-C":     "between points B and C",
+      "after C": "after point C",
+      "":        ""
+    };
+
+    // Map analysis location to SVG segment id suffix
+    var LOC_SEG = { "A-B": "ab", "B-C": "bc", "after C": "ac" };
+
+    /* ---- Utility: format a Unix timestamp as HH:MM:SS ---- */
+    function fmtTime(ts) {
+      var d = new Date(ts * 1000);
+      return d.toLocaleTimeString([], {
+        hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false
+      });
+    }
+
+    /* ---- Update the connection status text ---- */
+    function updateConnection(ageS, offlineAfter) {
+      var el = document.getElementById("connection-status");
+      el.classList.remove("live", "offline");
+      if (ageS > offlineAfter) {
+        el.textContent = "Sensor offline";
+        el.classList.add("offline");
+      } else {
+        el.textContent = "Live, updated " + Math.round(ageS) + " s ago";
+        el.classList.add("live");
+      }
+    }
+
+    /* ---- Update the status banner ---- */
+    function updateBanner(analysis) {
+      var banner  = document.getElementById("status-banner");
+      var title   = document.getElementById("status-title");
+      var reasons = document.getElementById("status-reasons");
+      var eta     = document.getElementById("status-eta");
+
+      banner.className = "";
+      reasons.innerHTML = "";
+      eta.textContent = "";
+
+      var s = analysis.status;
+
+      if (s === "NORMAL") {
+        banner.classList.add("normal");
+        title.textContent = "Drain flowing normally";
+      } else if (s === "WARNING") {
+        banner.classList.add("warning");
+        title.textContent = "Early warning: " +
+            (LOC_TEXT[analysis.location] || analysis.location);
+      } else if (s === "BLOCKAGE") {
+        banner.classList.add("blockage");
+        title.textContent = "Blockage detected: " +
+            (LOC_TEXT[analysis.location] || analysis.location);
+      } else if (s === "CRITICAL") {
+        banner.classList.add("critical");
+        title.textContent = "Overflow risk";
+      }
+
+      if (analysis.reasons && analysis.reasons.length > 0) {
+        analysis.reasons.forEach(function(r) {
+          var li = document.createElement("li");
+          li.textContent = r;
+          reasons.appendChild(li);
+        });
+      }
+
+      if (analysis.eta_min !== null && analysis.eta_min !== undefined) {
+        eta.textContent =
+            "At the current rate of rise, water reaches the overflow level " +
+            "in about " + analysis.eta_min + " min.";
+      }
+    }
+
+    /* ---- Update the SVG channel drawing ---- */
+    function updateSvg(latest, cfg, analysis) {
+      var depths = {
+        a: latest.depth_a,
+        b: latest.depth_b,
+        c: latest.depth_c
+      };
+
+      // Position the overflow and channel-top lines based on config
+      var overflowY = SVG_BOTTOM - cfg.OVERFLOW_CM * SVG_SCALE;
+      var topY      = SVG_BOTTOM - cfg.CHANNEL_CM   * SVG_SCALE;
+
+      var ol = document.getElementById("overflow-line");
+      ol.setAttribute("y1", overflowY);
+      ol.setAttribute("y2", overflowY);
+      document.getElementById("overflow-label").setAttribute("y", overflowY - 4);
+
+      var tl = document.getElementById("ch-top");
+      tl.setAttribute("y1", topY);
+      tl.setAttribute("y2", topY);
+      document.getElementById("ch-top-label").setAttribute("y", topY - 4);
+
+      // Water level and depth label for each column
+      ["a", "b", "c"].forEach(function(pt) {
+        var d = Math.max(0, Math.min(cfg.CHANNEL_CM, depths[pt]));
+        var h = d * SVG_SCALE;
+        var y = SVG_BOTTOM - h;
+
+        document.getElementById("water-" + pt).setAttribute("y", y);
+        document.getElementById("water-" + pt).setAttribute("height", h);
+        document.getElementById("depth-" + pt).textContent =
+            depths[pt].toFixed(1) + " cm";
+
+        // Column outline turns red when above overflow
+        var col = document.getElementById("col-" + pt);
+        if (depths[pt] >= cfg.OVERFLOW_CM) {
+          col.classList.add("overflow");
+        } else {
+          col.classList.remove("overflow");
+        }
+      });
+
+      // Reset all segment highlights
+      ["ab", "bc", "ac"].forEach(function(seg) {
+        var el = document.getElementById("seg-" + seg);
+        el.classList.remove("warning", "danger");
+        var lbl = document.getElementById("seg-label-" + seg);
+        lbl.textContent = "";
+        lbl.classList.remove("danger");
+      });
+
+      // Highlight the suspected segment
+      if (analysis.location &&
+          (analysis.status === "WARNING" ||
+           analysis.status === "BLOCKAGE" ||
+           analysis.status === "CRITICAL")) {
+        var key = LOC_SEG[analysis.location];
+        if (key) {
+          var seg  = document.getElementById("seg-" + key);
+          var lbl  = document.getElementById("seg-label-" + key);
+          if (analysis.status === "WARNING") {
+            seg.classList.add("warning");
+          } else {
+            seg.classList.add("danger");
+            lbl.classList.add("danger");
+          }
+          lbl.textContent = "suspected blockage";
+        }
+      }
+    }
+
+    /* ---- Update number cards ---- */
+    function updateCards(latest, analysis) {
+      document.getElementById("card-flow").textContent =
+          latest.flow.toFixed(1);
+      document.getElementById("card-temp").textContent =
+          latest.temp.toFixed(1);
+      if (analysis.eta_min !== null && analysis.eta_min !== undefined) {
+        document.getElementById("card-eta").textContent = analysis.eta_min;
+      } else {
+        document.getElementById("card-eta").textContent = "--";
+      }
+    }
+
+    /* ---- Initialise Chart.js charts (called once on page load) ---- */
+    function initCharts() {
+      if (!chartsReady) {
+        document.getElementById("charts").innerHTML =
+            '<p class="chart-msg">Charts unavailable ' +
+            "(Chart.js could not be loaded)</p>";
+        return;
+      }
+
+      var textColor =
+          getComputedStyle(document.documentElement)
+              .getPropertyValue("--text-muted").trim() || "#64748b";
+      var gridColor = "rgba(148, 163, 184, 0.12)";
+
+      var commonOpts = {
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: { duration: 0 },
+        interaction: { mode: "index", intersect: false },
+        scales: {
+          x: {
+            ticks: { color: textColor, maxRotation: 0, autoSkipPadding: 20 },
+            grid:  { color: gridColor }
+          },
+          y: {
+            beginAtZero: true,
+            ticks: { color: textColor },
+            grid:  { color: gridColor }
+          }
+        },
+        plugins: {
+          legend: { labels: { color: textColor, font: { size: 11 } } },
+          tooltip: { mode: "index", intersect: false }
+        }
+      };
+
+      // Depth chart: three lines + dashed overflow line
+      depthChart = new Chart(
+          document.getElementById("depth-chart").getContext("2d"),
+          {
+            type: "line",
+            data: {
+              labels: [],
+              datasets: [
+                { label: "Depth A", data: [], borderColor: "#3b82f6",
+                  backgroundColor: "rgba(59,130,246,0.08)", tension: 0.3,
+                  pointRadius: 0, borderWidth: 2, fill: false },
+                { label: "Depth B", data: [], borderColor: "#10b981",
+                  backgroundColor: "rgba(16,185,129,0.08)", tension: 0.3,
+                  pointRadius: 0, borderWidth: 2, fill: false },
+                { label: "Depth C", data: [], borderColor: "#f59e0b",
+                  backgroundColor: "rgba(245,158,11,0.08)", tension: 0.3,
+                  pointRadius: 0, borderWidth: 2, fill: false },
+                { label: "Overflow", data: [], borderColor: "#ef4444",
+                  borderDash: [6, 4], pointRadius: 0, borderWidth: 1.5,
+                  fill: false }
+              ]
+            },
+            options: Object.assign({}, commonOpts, {
+              scales: Object.assign({}, commonOpts.scales, {
+                y: Object.assign({}, commonOpts.scales.y,
+                                 { suggestedMax: 15 })
+              })
+            })
+          }
+      );
+
+      // Flow chart
+      flowChart = new Chart(
+          document.getElementById("flow-chart").getContext("2d"),
+          {
+            type: "line",
+            data: {
+              labels: [],
+              datasets: [
+                { label: "Flow", data: [], borderColor: "#06b6d4",
+                  backgroundColor: "rgba(6,182,212,0.12)", tension: 0.3,
+                  pointRadius: 0, borderWidth: 2, fill: true }
+              ]
+            },
+            options: commonOpts
+          }
+      );
+    }
+
+    /* ---- Update chart data from history ---- */
+    function updateCharts(history, cfg) {
+      if (!depthChart || !flowChart) return;
+      var readings = history.readings || [];
+      var labels = readings.map(function(r) { return fmtTime(r.ts); });
+
+      depthChart.data.labels = labels;
+      depthChart.data.datasets[0].data =
+          readings.map(function(r) { return r.depth_a; });
+      depthChart.data.datasets[1].data =
+          readings.map(function(r) { return r.depth_b; });
+      depthChart.data.datasets[2].data =
+          readings.map(function(r) { return r.depth_c; });
+      depthChart.data.datasets[3].data =
+          readings.map(function() { return cfg.OVERFLOW_CM; });
+      depthChart.update("none");
+
+      flowChart.data.labels = labels;
+      flowChart.data.datasets[0].data =
+          readings.map(function(r) { return r.flow; });
+      flowChart.update("none");
+    }
+
+    /* ---- Update alert log table ---- */
+    function updateAlerts(alerts) {
+      var tbody = document.getElementById("alert-body");
+      var list = alerts.alerts || [];
+      if (list.length === 0) {
+        tbody.innerHTML = "<tr><td colspan=\"3\">No alerts yet</td></tr>";
+        return;
+      }
+      tbody.innerHTML = list.map(function(a) {
+        var cls = "level-" + a.status.toLowerCase();
+        return "<tr>" +
+            "<td>" + fmtTime(a.ts) + "</td>" +
+            '<td class="' + cls + '">' + a.status + "</td>" +
+            "<td>" + a.message + "</td>" +
+            "</tr>";
+      }).join("");
+    }
+
+    /* ---- Show "no data" state ---- */
+    function showNoData() {
+      var el = document.getElementById("connection-status");
+      el.textContent = "Waiting for sensor data";
+      el.classList.remove("live", "offline");
+      document.getElementById("status-title").textContent =
+          "Waiting for sensor data";
+      document.getElementById("status-reasons").innerHTML = "";
+      document.getElementById("status-eta").textContent = "";
+    }
+
+    /* ---- Main refresh loop: poll all three endpoints ---- */
+    function refresh() {
+      Promise.all([
+        fetch("/api/latest"),
+        fetch("/api/history?n=60"),
+        fetch("/api/alerts?n=10")
+      ])
+        .then(function(responses) {
+          return Promise.all(
+              responses.map(function(r) { return r.json(); }));
+        })
+        .then(function(data) {
+          var latest  = data[0];
+          var history = data[1];
+          var alerts  = data[2];
+
+          if (latest.config) config = latest.config;
+
+          if (!latest.has_data) {
+            showNoData();
+            return;
+          }
+
+          updateConnection(latest.age_s, config.OFFLINE_AFTER_S);
+          updateBanner(latest.analysis);
+          updateSvg(latest.latest, config, latest.analysis);
+          updateCards(latest.latest, latest.analysis);
+          updateCharts(history, config);
+          updateAlerts(alerts);
+        })
+        .catch(function() {
+          // Server unreachable or a request failed
+          var el = document.getElementById("connection-status");
+          el.textContent = "Cannot reach the server";
+          el.classList.remove("live");
+          el.classList.add("offline");
+        });
+    }
+
+    /* ---- Boot up ---- */
+    initCharts();
+    refresh();
+    setInterval(refresh, REFRESH_MS);
+  </script>
+</body>
+</html>
