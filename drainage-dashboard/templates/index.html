@@ -136,7 +136,7 @@
     /* ---- Number cards ---- */
     #cards {
       display: grid;
-      grid-template-columns: repeat(3, 1fr);
+      grid-template-columns: repeat(4, 1fr);
       gap: 12px;
       margin-bottom: 16px;
     }
@@ -221,11 +221,15 @@
     .level-blockage { color: var(--blockage); font-weight: 600; }
     .level-critical { color: var(--critical); font-weight: 600; }
     .level-normal   { color: var(--normal); }
+    .level-material { color: #7c3aed; font-weight: 600; }
 
     /* ---- Responsive ---- */
-    @media (max-width: 768px) {
-      #cards  { grid-template-columns: 1fr; }
+    @media (max-width: 900px) {
+      #cards  { grid-template-columns: repeat(2, 1fr); }
       #charts { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 480px) {
+      #cards  { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -269,6 +273,11 @@
       <text id="seg-label-bc" class="s-seg" x="455" y="262" text-anchor="middle"></text>
       <text id="seg-label-ac" class="s-seg" x="650" y="262" text-anchor="middle"></text>
 
+      <!-- Object detected indicator (shown when IR sensor detects an object) -->
+      <circle id="obj-dot" cx="455" cy="250" r="7" fill="#7c3aed" opacity="0"/>
+      <text id="obj-label" x="455" y="240" text-anchor="middle"
+            class="s-small" fill="#7c3aed" opacity="0">object detected</text>
+
       <!-- Column A (upstream) -->
       <rect id="col-a" class="wall" x="60"  y="70" width="100" height="240" rx="4"/>
       <rect id="water-a" class="water" x="62" width="96" rx="2"/>
@@ -305,6 +314,11 @@
       <span class="card-label">Time to overflow</span>
       <span class="card-value" id="card-eta">--</span>
       <span class="card-unit">min</span>
+    </div>
+    <div class="card">
+      <span class="card-label">Detected material</span>
+      <span class="card-value" id="card-material">--</span>
+      <span class="card-unit" id="card-material-detail">no data</span>
     </div>
   </div>
 
@@ -384,7 +398,7 @@
     }
 
     /* ---- Update the status banner ---- */
-    function updateBanner(analysis) {
+    function updateBanner(analysis, material) {
       var banner  = document.getElementById("status-banner");
       var title   = document.getElementById("status-title");
       var reasons = document.getElementById("status-reasons");
@@ -405,8 +419,13 @@
             (LOC_TEXT[analysis.location] || analysis.location);
       } else if (s === "BLOCKAGE") {
         banner.classList.add("blockage");
-        title.textContent = "Blockage detected: " +
-            (LOC_TEXT[analysis.location] || analysis.location);
+        if (analysis.confirmed) {
+          title.textContent = "Blockage confirmed: " +
+              (LOC_TEXT[analysis.location] || analysis.location);
+        } else {
+          title.textContent = "Blockage detected: " +
+              (LOC_TEXT[analysis.location] || analysis.location);
+        }
       } else if (s === "CRITICAL") {
         banner.classList.add("critical");
         title.textContent = "Overflow risk";
@@ -420,6 +439,14 @@
         });
       }
 
+      // Show the last detected material for confirmed blockages
+      if (analysis.confirmed && material && material.material &&
+          material.material !== "UNKNOWN") {
+        var li = document.createElement("li");
+        li.textContent = "Last detected material: " + material.material;
+        reasons.appendChild(li);
+      }
+
       if (analysis.eta_min !== null && analysis.eta_min !== undefined) {
         eta.textContent =
             "At the current rate of rise, water reaches the overflow level " +
@@ -428,7 +455,7 @@
     }
 
     /* ---- Update the SVG channel drawing ---- */
-    function updateSvg(latest, cfg, analysis) {
+    function updateSvg(latest, cfg, analysis, material) {
       var depths = {
         a: latest.depth_a,
         b: latest.depth_b,
@@ -496,6 +523,23 @@
           lbl.textContent = "suspected blockage";
         }
       }
+
+      // Object detected indicator (from IR sensor)
+      var objDot   = document.getElementById("obj-dot");
+      var objLabel = document.getElementById("obj-label");
+      if (material && material.ir_detected) {
+        // Position at the suspected blockage segment, or default to B-C
+        var segX = { "ab": 225, "bc": 455, "ac": 650 };
+        var locKey = LOC_SEG[analysis.location] || "bc";
+        var x = segX[locKey] || 455;
+        objDot.setAttribute("cx", x);
+        objLabel.setAttribute("x", x);
+        objDot.setAttribute("opacity", "0.9");
+        objLabel.setAttribute("opacity", "1");
+      } else {
+        objDot.setAttribute("opacity", "0");
+        objLabel.setAttribute("opacity", "0");
+      }
     }
 
     /* ---- Update number cards ---- */
@@ -509,6 +553,26 @@
       } else {
         document.getElementById("card-eta").textContent = "--";
       }
+    }
+
+    /* ---- Update the detected-material card ---- */
+    function updateMaterial(material) {
+      var card = document.getElementById("card-material");
+      var detail = document.getElementById("card-material-detail");
+      if (!material) {
+        card.textContent = "--";
+        detail.textContent = "no data";
+        return;
+      }
+      card.textContent = material.material;
+      var parts = [];
+      if (material.confidence !== undefined && material.confidence !== null) {
+        parts.push(Math.round(material.confidence * 100) + "%");
+      }
+      if (material.ir_detected) {
+        parts.push("IR detected");
+      }
+      detail.textContent = parts.length > 0 ? parts.join(", ") : "detected";
     }
 
     /* ---- Initialise Chart.js charts (called once on page load) ---- */
@@ -646,6 +710,8 @@
           "Waiting for sensor data";
       document.getElementById("status-reasons").innerHTML = "";
       document.getElementById("status-eta").textContent = "";
+      document.getElementById("card-material").textContent = "--";
+      document.getElementById("card-material-detail").textContent = "no data";
     }
 
     /* ---- Main refresh loop: poll all three endpoints ---- */
@@ -672,9 +738,10 @@
           }
 
           updateConnection(latest.age_s, config.OFFLINE_AFTER_S);
-          updateBanner(latest.analysis);
-          updateSvg(latest.latest, config, latest.analysis);
+          updateBanner(latest.analysis, latest.material);
+          updateSvg(latest.latest, config, latest.analysis, latest.material);
           updateCards(latest.latest, latest.analysis);
+          updateMaterial(latest.material);
           updateCharts(history, config);
           updateAlerts(alerts);
         })

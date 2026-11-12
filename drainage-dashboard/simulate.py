@@ -4,15 +4,15 @@ Smart Drainage Monitoring System - Simulator
 Pretends to be the ESP32 and POSTs readings to the server every 2 seconds.
 Three phases:
   1. 20 readings of normal flow
-  2. 60 readings of a blockage building between B and C
+  2. 60 readings of a blockage building between B and C (with PLASTIC object)
   3. 25 readings of the blockage clearing back to normal
 
-Run:  python simulate.py
-(make sure app.py is already running)
+The server URL can be overridden with the SERVER_URL environment variable:
+  set SERVER_URL=http://localhost:5000   (Windows)
+  export SERVER_URL=http://localhost:5000  (Linux/Mac)
 
-Note: the flow drop rate is -0.15 per step (steeper than a real sensor would
-need) so that the dashboard clearly shows the transition
-Normal -> Early warning -> Blockage -> Normal within the demo.
+Run:  python simulate.py
+(make sure app.py or the Render server is running)
 """
 
 import urllib.request
@@ -20,26 +20,61 @@ import urllib.error
 import json
 import time
 import random
+import os
 
-URL = "http://localhost:5000/api/data"
+# Server URL - configurable via environment variable
+BASE_URL = os.environ.get(
+    "SERVER_URL",
+    "https://smart-drainage-blockage-prediction-system.onrender.com")
+DATA_URL = BASE_URL.rstrip("/") + "/api/data"
+MATERIAL_URL = BASE_URL.rstrip("/") + "/api/material"
 API_KEY = "change-me"
 
 
 def send(payload):
-    """POST a reading to the server and print the reply."""
+    """POST a water-level reading to the server and print the reply."""
     body = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
-        URL,
+        DATA_URL,
         data=body,
         headers={"Content-Type": "application/json", "X-API-Key": API_KEY},
     )
     try:
-        with urllib.request.urlopen(req, timeout=5) as resp:
+        with urllib.request.urlopen(req, timeout=10) as resp:
             reply = json.loads(resp.read())
             print("    -> status={} location={} buzzer={}".format(
                 reply.get("status", "?"),
                 reply.get("location", ""),
                 reply.get("buzzer", "?")))
+            return reply
+    except urllib.error.HTTPError as e:
+        print("    -> HTTP {}: {}".format(e.code, e.read().decode()))
+    except urllib.error.URLError as e:
+        print("    -> Cannot reach server: {}".format(e.reason))
+    except Exception as e:
+        print("    -> Error: {}".format(e))
+    return None
+
+
+def send_material(material, confidence, ir_detected):
+    """POST a material detection to the server and print the reply."""
+    payload = json.dumps({
+        "material": material,
+        "confidence": confidence,
+        "ir_detected": ir_detected,
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        MATERIAL_URL,
+        data=payload,
+        headers={"Content-Type": "application/json", "X-API-Key": API_KEY},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            reply = json.loads(resp.read())
+            print("    -> material={} confidence={} ir_detected={}".format(
+                reply.get("material", "?"),
+                reply.get("confidence", "?"),
+                reply.get("ir_detected", "?")))
             return reply
     except urllib.error.HTTPError as e:
         print("    -> HTTP {}: {}".format(e.code, e.read().decode()))
@@ -69,7 +104,7 @@ def make_payload(a, b, c, flow, temp):
 def main():
     print("=" * 60)
     print("  Smart Drainage Monitoring System - Simulator")
-    print("  Make sure app.py is running on http://localhost:5000")
+    print("  Server: {}".format(BASE_URL))
     print("=" * 60)
     print()
 
@@ -90,6 +125,7 @@ def main():
     # depth_a rises slowly (some back-up effect upstream)
     # depth_c drops (less water getting through)
     # flow drops (blockage restricts flow)
+    # An object (PLASTIC) is detected by the IR sensor periodically
     print()
     print("--- Phase 2: Blockage building between B and C (60 readings) ---")
     for i in range(60):
@@ -100,12 +136,19 @@ def main():
         payload = make_payload(a, b, c, flow, temp)
         print("[{:3d}] {}".format(i + 21, payload))
         send(payload)
+        # Send material detection every 10 steps during the blockage
+        if i % 10 == 0:
+            print("    [material] PLASTIC, confidence=0.85, ir_detected=True")
+            send_material("PLASTIC", 0.85, True)
         time.sleep(interval)
 
     # --- Phase 3: Blockage clearing back to normal (25 readings) --------
-    # Linearly interpolate from current values back to normal
+    # Clear the object detection first, then interpolate depths to normal
     print()
     print("--- Phase 3: Blockage clearing (25 readings) ---")
+    print("    [material] UNKNOWN, ir_detected=False (object cleared)")
+    send_material("UNKNOWN", 0.2, False)
+
     start_a, start_b, start_c, start_flow = a, b, c, flow
     for i in range(25):
         frac = (i + 1) / 25.0

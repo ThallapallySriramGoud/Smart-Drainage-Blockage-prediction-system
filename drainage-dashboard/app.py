@@ -81,6 +81,13 @@ def init_db():
             location  TEXT NOT NULL DEFAULT '',
             message   TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS materials (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts          REAL NOT NULL,
+            material    TEXT NOT NULL,
+            confidence  REAL NOT NULL,
+            ir_detected  INTEGER NOT NULL DEFAULT 0
+        );
     """)
     conn.commit()
     conn.close()
@@ -142,6 +149,7 @@ def analyse(rows):
             "status": "NORMAL",
             "location": "",
             "score": 0,
+            "confirmed": False,
             "reasons": [],
             "eta_min": None,
             "slopes": {},
@@ -173,13 +181,17 @@ def analyse(rows):
     # --- 4. Score each possible blockage location ------------------------
     # Each segment keeps its own score, reasons list, and a "diff" value
     # used as a tie-breaker when two segments have the same score.
-    seg_ab = {"score": 0, "reasons": [], "diff": s_a - s_b}
-    seg_bc = {"score": 0, "reasons": [], "diff": s_b - s_c}
-    seg_ac = {"score": 0, "reasons": [], "diff": 0}   # "after C"
+    seg_ab = {"score": 0, "reasons": [], "diff": s_a - s_b,
+              "has_gradient": False, "has_flow_low": False}
+    seg_bc = {"score": 0, "reasons": [], "diff": s_b - s_c,
+              "has_gradient": False, "has_flow_low": False}
+    seg_ac = {"score": 0, "reasons": [], "diff": 0,
+              "has_gradient": False, "has_flow_low": False}
 
     # Segment A-B: water deeper at A than B (back-up upstream of blockage)
     if (s_a - s_b) >= CFG["GRADIENT_CM"]:
         seg_ab["score"] += 2
+        seg_ab["has_gradient"] = True
         seg_ab["reasons"].append(
             "Water is {:.1f} cm deeper at A than at B".format(s_a - s_b))
     if slope_a >= CFG["RISE_CM_PER_MIN"]:
@@ -188,11 +200,13 @@ def analyse(rows):
             "Level at A rising {:.1f} cm/min".format(slope_a))
     if flow_low:
         seg_ab["score"] += 1
+        seg_ab["has_flow_low"] = True
         seg_ab["reasons"].append(flow_reason)
 
     # Segment B-C: water deeper at B than C
     if (s_b - s_c) >= CFG["GRADIENT_CM"]:
         seg_bc["score"] += 2
+        seg_bc["has_gradient"] = True
         seg_bc["reasons"].append(
             "Water is {:.1f} cm deeper at B than at C".format(s_b - s_c))
     if slope_b >= CFG["RISE_CM_PER_MIN"]:
@@ -201,6 +215,7 @@ def analyse(rows):
             "Level at B rising {:.1f} cm/min".format(slope_b))
     if flow_low:
         seg_bc["score"] += 1
+        seg_bc["has_flow_low"] = True
         seg_bc["reasons"].append(flow_reason)
 
     # After C: all three depths rising quickly
@@ -208,9 +223,11 @@ def analyse(rows):
             and slope_b >= CFG["RISE_CM_PER_MIN"]
             and slope_c >= CFG["RISE_CM_PER_MIN"]):
         seg_ac["score"] += 2
+        seg_ac["has_gradient"] = True
         seg_ac["reasons"].append("All depths rising rapidly")
     if flow_low:
         seg_ac["score"] += 1
+        seg_ac["has_flow_low"] = True
         seg_ac["reasons"].append(flow_reason)
 
     # --- 5. Pick the highest-scoring segment -----------------------------
@@ -248,13 +265,46 @@ def analyse(rows):
     if eta_min is not None:
         eta_min = round(eta_min, 1)
 
+    # A blockage is "confirmed" when both the depth gradient and low flow
+    # agree on the same segment (not just a rising trend alone).
+    confirmed = (status in ("BLOCKAGE", "CRITICAL")
+                 and best["has_gradient"] and best["has_flow_low"])
+
     return {
         "status": status,
         "location": location,
         "score": best["score"],
+        "confirmed": confirmed,
         "reasons": reasons,
         "eta_min": eta_min,
         "slopes": slopes,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Material helpers
+# ---------------------------------------------------------------------------
+
+# Allowed material categories
+MATERIALS = ("ROCK", "PLASTIC", "RUBBER", "WOOD", "OTHER", "UNKNOWN")
+
+# Confidence threshold below which we treat the reading as UNKNOWN
+CONFIDENCE_THRESHOLD = 0.6
+
+
+def _latest_material(db):
+    """Return the most recent material detection as a dict, or None."""
+    mat = db.execute(
+        "SELECT ts, material, confidence, ir_detected FROM materials "
+        "ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    if not mat:
+        return None
+    return {
+        "ts": mat["ts"],
+        "material": mat["material"],
+        "confidence": mat["confidence"],
+        "ir_detected": bool(mat["ir_detected"]),
     }
 
 
@@ -347,6 +397,77 @@ def api_data():
     })
 
 
+@app.route("/api/material", methods=["POST"])
+def api_material():
+    """Receive a material identification from the ESP32 object sensor."""
+    # --- API key check (same as /api/data) -------------------------------
+    if request.headers.get("X-API-Key") != API_KEY:
+        return jsonify({"error": "unauthorized"}), 401
+
+    # --- Parse and validate JSON ----------------------------------------
+    data = request.get_json(silent=True)
+    if not data:
+        return jsonify({"error": "invalid or empty JSON body"}), 400
+
+    material = data.get("material")
+    if material not in MATERIALS:
+        return jsonify({"error": "invalid material"}), 400
+
+    confidence = data.get("confidence")
+    if confidence is None or isinstance(confidence, bool):
+        return jsonify({"error": "confidence is missing or not a number"}), 400
+    try:
+        confidence = float(confidence)
+    except (TypeError, ValueError):
+        return jsonify({"error": "confidence is not a number"}), 400
+    if confidence < 0 or confidence > 1:
+        return jsonify({"error": "confidence must be between 0 and 1"}), 400
+
+    ir_detected = data.get("ir_detected")
+    if not isinstance(ir_detected, bool):
+        return jsonify({"error": "ir_detected must be true or false"}), 400
+
+    # If confidence is too low, treat the material as UNKNOWN
+    if confidence < CONFIDENCE_THRESHOLD:
+        material = "UNKNOWN"
+
+    now = time.time()
+    db = get_db()
+
+    # --- Store the material reading -------------------------------------
+    db.execute(
+        "INSERT INTO materials (ts, material, confidence, ir_detected) "
+        "VALUES (?, ?, ?, ?)",
+        (now, material, confidence, 1 if ir_detected else 0)
+    )
+
+    # --- Log an alert when the material changes -------------------------
+    # Compare with the material entry before the one we just inserted.
+    prev_rows = db.execute(
+        "SELECT material FROM materials ORDER BY id DESC LIMIT 2"
+    ).fetchall()
+    prev_material = prev_rows[1]["material"] if len(prev_rows) > 1 else None
+
+    if prev_material != material:
+        msg = "Detected {} ({:.0%} confidence".format(material, confidence)
+        if ir_detected:
+            msg += ", IR object detected"
+        msg += ")"
+        db.execute(
+            "INSERT INTO alerts (ts, status, location, message) "
+            "VALUES (?, ?, ?, ?)",
+            (now, "MATERIAL", "", msg)
+        )
+
+    db.commit()
+
+    return jsonify({
+        "material": material,
+        "confidence": confidence,
+        "ir_detected": ir_detected,
+    })
+
+
 @app.route("/api/latest")
 def api_latest():
     """Return the latest reading, the analysis result, and config."""
@@ -359,7 +480,8 @@ def api_latest():
     ).fetchall()
 
     if not rows:
-        return jsonify({"has_data": False, "config": CFG})
+        return jsonify({"has_data": False, "config": CFG,
+                        "material": _latest_material(db)})
 
     rows = [dict(r) for r in reversed(rows)]  # oldest first
     latest = rows[-1]
@@ -380,6 +502,7 @@ def api_latest():
             "flow": latest["flow"],
             "temp": latest["temp"],
         },
+        "material": _latest_material(db),
         "analysis": result,
     })
 
@@ -425,6 +548,9 @@ def index():
 
 # ---------------------------------------------------------------------------
 
+# Initialise the database when the module loads so it works with both
+# `python app.py` and `gunicorn app:app`
+init_db()
+
 if __name__ == "__main__":
-    init_db()
     app.run(host="0.0.0.0", port=5000)
