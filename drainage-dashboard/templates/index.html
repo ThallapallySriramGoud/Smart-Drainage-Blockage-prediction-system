@@ -4,421 +4,942 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Smart Drainage Monitoring System</title>
-  <!-- Chart.js 4.4.1 from jsDelivr CDN -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@500;700;800&display=swap" rel="stylesheet">
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
   <style>
-    /* ---- Theme variables (light mode is the default) ---- */
+    /* ================================================================
+       DESIGN TOKENS
+       ================================================================ */
     :root {
-      --bg:          #eef1f5;
-      --card:        #ffffff;
-      --text:        #1e293b;
-      --text-muted:  #64748b;
-      --border:      #cbd5e1;
-      --water:       #3b82f6;
-      --normal:      #16a34a;
-      --warning:     #d97706;
-      --blockage:    #dc2626;
-      --critical:    #b91c1c;
-      --font:        -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
-                     Helvetica, Arial, sans-serif;
+      --bg:           #F2F8F7;
+      --card:         #FFFFFF;
+      --ink:          #12303A;
+      --muted:        #5B7480;
+      --line:         #DCEAE8;
+      --primary:      #0E8F8A;
+      --primary-soft: #DDF3F0;
+      --ok:           #2FBF85;
+      --warn:         #F5A524;
+      --danger:       #F2554A;
+      --critical:     #D63A3A;
+      --font:         'Nunito', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      --r-panel:      26px;
+      --r-card:       20px;
+      --r-chip:       12px;
+      --shadow-sm:    0 2px 8px rgba(14,143,138,.08);
+      --shadow-md:    0 4px 20px rgba(14,143,138,.12);
+      --shadow-lg:    0 8px 32px rgba(14,143,138,.14);
     }
 
-    /* ---- Dark mode (follows the OS setting automatically) ---- */
-    @media (prefers-color-scheme: dark) {
-      :root {
-        --bg:         #0f172a;
-        --card:       #1e293b;
-        --text:       #e2e8f0;
-        --text-muted: #94a3b8;
-        --border:     #334155;
-      }
-    }
-
-    * { margin: 0; padding: 0; box-sizing: border-box; }
+    /* ================================================================
+       RESET & BASE
+       ================================================================ */
+    *, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
+    html { scroll-behavior: smooth; }
 
     body {
       font-family: var(--font);
+      font-weight: 500;
       background: var(--bg);
-      color: var(--text);
-      padding: 16px;
-      max-width: 1100px;
+      color: var(--ink);
+      min-height: 100vh;
+      line-height: 1.6;
+    }
+
+    /* Page fade-in */
+    @keyframes pageFadeIn {
+      from { opacity:0; transform:translateY(10px); }
+      to   { opacity:1; transform:translateY(0); }
+    }
+    body { animation: pageFadeIn .45s ease both; }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: .01ms !important;
+        transition-duration: .01ms !important;
+      }
+    }
+
+    /* Focus visible — keyboard users */
+    :focus-visible {
+      outline: 3px solid var(--primary);
+      outline-offset: 3px;
+      border-radius: 4px;
+    }
+
+    /* ================================================================
+       LAYOUT WRAPPER
+       ================================================================ */
+    .page-wrap {
+      max-width: 1200px;
       margin: 0 auto;
-      line-height: 1.5;
+      padding: 0 20px 40px;
     }
 
-    /* ---- Header ---- */
+    /* ================================================================
+       HEADER
+       ================================================================ */
     header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 16px;
-      flex-wrap: wrap;
-      gap: 8px;
+      background: linear-gradient(160deg, #CDEBE6 0%, #F2F8F7 100%);
+      border-radius: 0 0 40px 40px;
+      padding: 0 24px;
+      margin: 0 0 28px;
+      box-shadow: var(--shadow-sm);
     }
-    header h1 {
-      font-size: 1.25rem;
-      font-weight: 600;
-    }
-    #connection-status {
-      font-size: 0.875rem;
-      color: var(--text-muted);
-    }
-    #connection-status.live    { color: var(--normal); }
-    #connection-status.offline { color: var(--critical); font-weight: 600; }
 
-    /* ---- Status banner ---- */
-    #status-banner {
+    .header-inner {
+      max-width: 1200px;
+      margin: 0 auto;
+      height: 68px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .header-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 0;
+    }
+
+    .header-logo {
+      flex-shrink: 0;
+      width: 38px;
+      height: 38px;
+      background: var(--primary-soft);
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border: 1.5px solid rgba(14,143,138,.2);
+    }
+
+    header h1 {
+      font-size: 1.5rem;
+      font-weight: 800;
+      color: var(--ink);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      letter-spacing: -.01em;
+    }
+
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-shrink: 0;
+    }
+
+    /* Theme toggle — kept functional, restyled */
+    #theme-toggle {
+      background: rgba(14,143,138,.1);
+      border: 1.5px solid rgba(14,143,138,.2);
+      border-radius: 20px;
+      color: var(--primary);
+      cursor: pointer;
+      font-size: 0.8rem;
+      font-family: var(--font);
+      font-weight: 700;
+      padding: 6px 14px;
+      transition: background .2s;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+    #theme-toggle:hover { background: rgba(14,143,138,.18); }
+
+    /* Connection status pill */
+    #connection-status {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      font-size: 0.85rem;
+      font-weight: 700;
+      padding: 6px 16px;
+      border-radius: 999px;
+      background: var(--primary-soft);
+      border: 1.5px solid var(--line);
+      color: var(--muted);
+      white-space: nowrap;
+      transition: background .3s, border-color .3s, color .3s;
+    }
+    #connection-status::before {
+      content: '';
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #94a3b8;
+      flex-shrink: 0;
+      transition: background .3s;
+    }
+
+    /* JS adds/removes these — keep the class names */
+    #connection-status.live {
+      background: #ECFDF5;
+      border-color: #6EE7B7;
+      color: #065F46;
+    }
+    #connection-status.live::before {
+      background: var(--ok);
+      animation: pulse-dot 2s ease-out infinite;
+    }
+    #connection-status.offline {
+      background: #FEF2F2;
+      border-color: #FCA5A5;
+      color: #991B1B;
+    }
+    #connection-status.offline::before {
+      background: var(--danger);
+    }
+
+    @keyframes pulse-dot {
+      0%   { box-shadow: 0 0 0 0 rgba(47,191,133,.6); }
+      70%  { box-shadow: 0 0 0 7px rgba(47,191,133,0); }
+      100% { box-shadow: 0 0 0 0 rgba(47,191,133,0); }
+    }
+
+    /* ================================================================
+       SHARED PANEL BASE
+       ================================================================ */
+    .panel {
       background: var(--card);
-      border-left: 4px solid var(--normal);
-      border-radius: 6px;
-      padding: 16px;
-      margin-bottom: 16px;
+      border: 1.5px solid var(--line);
+      border-radius: var(--r-panel);
+      box-shadow: var(--shadow-sm);
+      transition: box-shadow .2s;
     }
-    #status-banner.warning  { border-left-color: var(--warning); }
-    #status-banner.blockage  { border-left-color: var(--blockage); }
-    #status-banner.critical  { border-left-color: var(--critical); }
+    .panel:hover { box-shadow: var(--shadow-md); }
+
+    /* Glass alias kept so HTML markup still uses it */
+    .glass {
+      background: var(--card);
+      border: 1.5px solid var(--line);
+      border-radius: var(--r-panel);
+      box-shadow: var(--shadow-sm);
+      transition: box-shadow .2s;
+    }
+    .glass:hover { box-shadow: var(--shadow-md); }
+
+    .section-label {
+      font-size: 0.85rem;
+      font-weight: 700;
+      color: var(--muted);
+      margin-bottom: 14px;
+    }
+
+    /* ================================================================
+       STATUS BANNER
+       ================================================================ */
+    #status-banner {
+      border-radius: var(--r-panel);
+      padding: 22px 26px;
+      margin-bottom: 24px;
+      border: 1.5px solid var(--line);
+      position: relative;
+      overflow: hidden;
+      background: var(--card);
+      transition: border-color .35s, background .35s, box-shadow .35s;
+    }
+
+    /* Left colour stripe */
+    #status-banner::before {
+      content: '';
+      position: absolute;
+      left: 0; top: 0; bottom: 0;
+      width: 5px;
+      border-radius: 5px 0 0 5px;
+      background: var(--ok);
+      transition: background .35s;
+    }
+
+    .banner-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 18px;
+    }
+
+    .banner-icon {
+      flex-shrink: 0;
+      width: 46px;
+      height: 46px;
+      border-radius: var(--r-chip);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #ECFDF5;
+      border: 1.5px solid #6EE7B7;
+      transition: background .35s, border-color .35s;
+    }
+
+    .banner-body { flex: 1; min-width: 0; }
+
     #status-title {
-      font-size: 1.1rem;
-      font-weight: 600;
-      margin-bottom: 8px;
+      font-size: 1.8rem;
+      font-weight: 800;
+      margin-bottom: 6px;
+      color: var(--ink);
+      letter-spacing: -.01em;
+      line-height: 1.2;
     }
+
     #status-reasons {
-      list-style: disc;
-      padding-left: 20px;
-      margin-bottom: 8px;
+      list-style: none;
+      padding: 0;
+      margin-bottom: 6px;
     }
     #status-reasons li {
-      font-size: 0.875rem;
-      color: var(--text-muted);
-      margin-bottom: 2px;
+      font-size: 1rem;
+      color: var(--muted);
+      padding: 1px 0 1px 18px;
+      position: relative;
     }
-    #status-eta {
-      font-size: 0.875rem;
-      color: var(--warning);
-      font-weight: 500;
+    #status-reasons li::before {
+      content: '›';
+      position: absolute;
+      left: 5px;
+      color: var(--primary);
+      font-weight: 800;
     }
 
-    /* ---- SVG channel section ---- */
+    #status-eta {
+      font-size: 1rem;
+      color: var(--warn);
+      font-weight: 700;
+    }
+
+    /* JS sets these classes — style each */
+    #status-banner.normal {
+      background: #F0FDF8;
+      border-color: #A7F3D0;
+      box-shadow: 0 4px 20px rgba(47,191,133,.12);
+    }
+    #status-banner.normal::before { background: var(--ok); }
+    #status-banner.normal .banner-icon { background:#ECFDF5; border-color:#6EE7B7; }
+
+    #status-banner.warning {
+      background: #FFFBEB;
+      border-color: #FDE68A;
+      box-shadow: 0 4px 20px rgba(245,165,36,.15);
+    }
+    #status-banner.warning::before { background: var(--warn); }
+    #status-banner.warning .banner-icon { background:#FFF8E1; border-color:#FBBF24; }
+
+    #status-banner.blockage {
+      background: #FFF5F4;
+      border-color: #FECACA;
+      box-shadow: 0 4px 20px rgba(242,85,74,.12);
+    }
+    #status-banner.blockage::before { background: var(--danger); }
+    #status-banner.blockage .banner-icon { background:#FEF2F2; border-color:#FCA5A5; }
+
+    #status-banner.critical {
+      background: #FFF1F1;
+      border-color: #F87171;
+      box-shadow: 0 4px 24px rgba(214,58,58,.2);
+      animation: pulse-critical 2s ease-in-out infinite;
+    }
+    #status-banner.critical::before { background: var(--critical); }
+    #status-banner.critical .banner-icon { background:#FEE2E2; border-color:#F87171; }
+
+    @keyframes pulse-critical {
+      0%, 100% { box-shadow: 0 4px 20px rgba(214,58,58,.2); }
+      50%       { box-shadow: 0 4px 32px rgba(214,58,58,.35); }
+    }
+
+    /* ================================================================
+       CHANNEL VIEW
+       ================================================================ */
     #channel-section {
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      padding: 16px;
-      margin-bottom: 16px;
+      padding: 22px 20px 14px;
+      margin-bottom: 24px;
     }
-    #channel-section h3 {
-      font-size: 0.875rem;
-      color: var(--text-muted);
-      margin-bottom: 8px;
-      font-weight: 500;
-    }
+
     #channel-svg {
       width: 100%;
       height: auto;
       display: block;
     }
 
-    /* SVG element styles */
-    .wall     { fill: none; stroke: var(--border); stroke-width: 2; }
-    .wall.overflow { stroke: var(--critical); }
-    .water    { fill: var(--water); }
-    .connector { fill: var(--border); opacity: 0.25; }
-    .connector.warning { fill: var(--warning); opacity: 0.55; }
-    .connector.danger  { fill: var(--blockage); opacity: 0.55; }
-    .overflow-line { stroke: var(--critical); stroke-dasharray: 6 4; stroke-width: 1.5; }
-    .ch-top-line   { stroke: var(--text-muted); stroke-dasharray: 3 3; stroke-width: 1; opacity: 0.4; }
-    .s-label  { font-size: 13px; fill: var(--text); font-weight: 600; font-family: var(--font); }
-    .s-depth  { font-size: 12px; fill: var(--text-muted); font-family: var(--font); }
-    .s-small  { font-size: 10px; fill: var(--text-muted); font-family: var(--font); }
-    .s-seg    { font-size: 10px; fill: var(--warning); font-weight: 600; font-family: var(--font); }
-    .s-seg.danger { fill: var(--blockage); }
+    /* SVG classes — same names, light-theme colours */
+    .wall {
+      fill: #FFFFFF;
+      stroke: #B9D4D1;
+      stroke-width: 2;
+    }
+    .wall.overflow { stroke: var(--danger); fill: #FFF5F4; }
 
-    /* ---- Number cards ---- */
+    .water {
+      fill: url(#water-grad);
+      transition: y  .6s cubic-bezier(.25,.46,.45,.94),
+                  height .6s cubic-bezier(.25,.46,.45,.94);
+    }
+
+    .connector { fill: #EBF5F4; }
+    .connector.warning { fill: rgba(245,165,36,.22); }
+    .connector.danger  { fill: rgba(242,85,74,.2); }
+
+    .overflow-line {
+      stroke: var(--danger);
+      stroke-dasharray: 8 5;
+      stroke-width: 1.5;
+    }
+    .ch-top-line {
+      stroke: var(--line);
+      stroke-dasharray: 4 4;
+      stroke-width: 1;
+    }
+
+    /* SVG text — readable on white */
+    .s-label { font-size:13px; fill:#12303A; font-weight:700; font-family:'Nunito',sans-serif; }
+    .s-depth { font-size:12px; fill:#0E8F8A; font-family:'Nunito',sans-serif; font-weight:700; }
+    .s-small { font-size:10px; fill:#5B7480; font-family:'Nunito',sans-serif; }
+    .s-seg   { font-size:10px; fill:#D97706; font-weight:700; font-family:'Nunito',sans-serif; }
+    .s-seg.danger { fill:#D63A3A; }
+
+    /* ================================================================
+       METRIC CARDS
+       ================================================================ */
     #cards {
       display: grid;
       grid-template-columns: repeat(5, 1fr);
-      gap: 12px;
-      margin-bottom: 16px;
-    }
-    .card {
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      padding: 12px 16px;
-    }
-    .card-label {
-      font-size: 0.75rem;
-      color: var(--text-muted);
-      display: block;
-    }
-    .card-value {
-      font-size: 1.5rem;
-      font-weight: 600;
-    }
-    .card-unit {
-      font-size: 0.875rem;
-      color: var(--text-muted);
-      display: block;
-    }
-    /* Advice text under the blockage-cause card */
-    .card-advice {
-      font-size: 0.75rem;
-      color: var(--warning);
-      display: block;
-      margin-top: 4px;
-      font-style: italic;
+      gap: 16px;
+      margin-bottom: 24px;
     }
 
-    /* ---- Charts ---- */
+    /* .card is used by HTML; .glass is an alias — both white, same style */
+    .card {
+      background: var(--card);
+      border: 1.5px solid var(--line);
+      border-radius: var(--r-card);
+      box-shadow: var(--shadow-sm);
+      padding: 20px 18px 18px;
+      position: relative;
+      overflow: hidden;
+      cursor: default;
+      transition: box-shadow .2s, transform .2s;
+    }
+    .card:hover {
+      box-shadow: var(--shadow-md);
+      transform: translateY(-2px);
+    }
+
+    /* Thin teal top strip */
+    .card::after {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 3px;
+      border-radius: var(--r-card) var(--r-card) 0 0;
+      background: var(--primary);
+      opacity: .18;
+    }
+
+    /* Icon chip — all cards share the same teal chip */
+    .card-icon {
+      width: 36px;
+      height: 36px;
+      border-radius: var(--r-chip);
+      background: var(--primary-soft);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 12px;
+      flex-shrink: 0;
+    }
+
+    .card-label {
+      font-size: 0.85rem;
+      font-weight: 500;
+      color: var(--muted);
+      display: block;
+      margin-bottom: 4px;
+    }
+    .card-value {
+      font-size: 2rem;
+      font-weight: 800;
+      line-height: 1;
+      color: var(--ink);
+      display: block;
+      letter-spacing: -.02em;
+    }
+    .card-unit {
+      font-size: 0.85rem;
+      color: var(--muted);
+      display: block;
+      margin-top: 4px;
+    }
+    .card-advice {
+      font-size: 0.8rem;
+      color: var(--warn);
+      display: block;
+      margin-top: 8px;
+      font-style: italic;
+      line-height: 1.4;
+    }
+
+    /* Material badge (shown inside material card) */
+    .mat-badge {
+      display: inline-block;
+      padding: 2px 10px;
+      border-radius: 999px;
+      font-size: 0.72rem;
+      font-weight: 700;
+      margin-top: 4px;
+    }
+
+    /* Material colours — updated per spec */
+    .mat-PLASTIC  { background: rgba(59,130,246,.12);  color: #1D4ED8; }
+    .mat-SAND     { background: rgba(224,169,59,.14);  color: #92400E; }
+    .mat-GRAVEL   { background: rgba(160,138,118,.14); color: #57534E; }
+    .mat-ROCK     { background: rgba(107,122,143,.14); color: #374151; }
+    .mat-WOOD     { background: rgba(185,118,74,.14);  color: #7C2D12; }
+    .mat-RUBBER   { background: rgba(139,108,240,.14); color: #5B21B6; }
+    .mat-OTHER    { background: rgba(20,184,166,.14);  color: #0F766E; }
+    .mat-UNKNOWN  { background: rgba(148,163,184,.14); color: #475569; }
+
+    /* Blockage cause card — only strongly coloured card, when active */
+    #card-cause-card.active {
+      background: linear-gradient(135deg, #FF7A6B 0%, #F2554A 100%);
+      border-color: #F2554A;
+      box-shadow: 0 6px 24px rgba(242,85,74,.3);
+      color: #fff;
+    }
+    #card-cause-card.active .card-label,
+    #card-cause-card.active .card-unit  { color: rgba(255,255,255,.8); }
+    #card-cause-card.active .card-value { color: #fff; }
+    #card-cause-card.active .card-advice { color: rgba(255,255,255,.85); }
+    #card-cause-card.active .card-icon  {
+      background: rgba(255,255,255,.2);
+    }
+    #card-cause-card.active::after { background: rgba(255,255,255,.3); opacity: 1; }
+
+    /* ================================================================
+       CHARTS
+       ================================================================ */
     #charts {
       display: grid;
       grid-template-columns: 1fr 1fr;
-      gap: 16px;
-      margin-bottom: 16px;
+      gap: 18px;
+      margin-bottom: 24px;
     }
+
     .chart-box {
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      padding: 12px;
+      padding: 20px 18px 14px;
     }
     .chart-box h3 {
-      font-size: 0.875rem;
-      color: var(--text-muted);
-      margin-bottom: 8px;
-      font-weight: 500;
+      font-size: 0.85rem;
+      font-weight: 700;
+      color: var(--muted);
+      margin-bottom: 14px;
     }
     .chart-wrap {
       position: relative;
       height: 200px;
     }
     .chart-msg {
-      font-size: 0.875rem;
-      color: var(--text-muted);
-      padding: 20px;
+      font-size: 0.9rem;
+      color: var(--muted);
+      padding: 24px;
       text-align: center;
     }
 
-    /* ---- Material detection summary ---- */
+    /* ================================================================
+       MATERIAL SUMMARY
+       ================================================================ */
     #mat-summary-section {
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      padding: 16px;
-      margin-bottom: 16px;
-    }
-    #mat-summary-section h3 {
-      font-size: 0.875rem;
-      color: var(--text-muted);
-      margin-bottom: 10px;
-      font-weight: 500;
-    }
-    #mat-summary-bars {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-    }
-    .mat-pill {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      background: var(--bg);
-      border: 1px solid var(--border);
-      border-radius: 999px;
-      padding: 3px 10px;
-      font-size: 0.8rem;
-    }
-    .mat-pill-count {
-      font-weight: 700;
-      color: var(--water);
-    }
-    /* IR dot style - kept as supporting evidence indicator */
-    .ir-dot {
-      display: inline-block;
-      width: 8px;
-      height: 8px;
-      border-radius: 50%;
-      background: #7c3aed;
-      vertical-align: middle;
-      margin-right: 3px;
+      padding: 20px 22px;
+      margin-bottom: 24px;
     }
 
-    /* ---- Alert log table ---- */
-    #alerts-section {
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      padding: 16px;
+    #mat-summary-bars {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
     }
-    #alerts-section h3 {
-      font-size: 0.875rem;
-      color: var(--text-muted);
-      margin-bottom: 8px;
+
+    /* mat-pill — class set by JS, restyled */
+    .mat-pill {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 14px;
+      background: var(--bg);
+      border: 1.5px solid var(--line);
+      border-radius: 999px;
+      font-size: 0.85rem;
+      color: var(--ink);
       font-weight: 500;
     }
+    .mat-pill-count {
+      font-weight: 800;
+      color: var(--primary);
+      min-width: 22px;
+      text-align: right;
+    }
+
+    /* ================================================================
+       ALERT LOG
+       ================================================================ */
+    #alerts-section {
+      padding: 20px 22px 24px;
+    }
+
     table {
       width: 100%;
       border-collapse: collapse;
     }
-    th, td {
-      text-align: left;
-      padding: 8px;
-      border-bottom: 1px solid var(--border);
-      font-size: 0.875rem;
+    thead tr {
+      border-bottom: 1.5px solid var(--line);
     }
     th {
-      color: var(--text-muted);
-      font-weight: 500;
+      text-align: left;
+      padding: 6px 12px 10px;
+      font-size: 0.85rem;
+      font-weight: 700;
+      color: var(--muted);
     }
-    .level-warning  { color: var(--warning); font-weight: 600; }
-    .level-blockage { color: var(--blockage); font-weight: 600; }
-    .level-critical { color: var(--critical); font-weight: 600; }
-    .level-normal   { color: var(--normal); }
-    .level-material { color: #7c3aed; font-weight: 600; }
+    td {
+      text-align: left;
+      padding: 11px 12px;
+      font-size: 0.9rem;
+      border-bottom: 1px solid var(--line);
+      vertical-align: middle;
+      color: var(--ink);
+    }
+    tbody tr:nth-child(even) { background: #F7FBFA; }
+    tbody tr:hover { background: var(--primary-soft); }
 
-    /* ---- Responsive ---- */
+    @keyframes rowIn {
+      from { opacity:0; transform:translateX(-8px); }
+      to   { opacity:1; transform:translateX(0); }
+    }
+    tbody tr { animation: rowIn .22s ease both; }
+
+    /* Level badges — same class names, new colours */
+    .level-warning, .level-blockage, .level-critical,
+    .level-normal, .level-material {
+      display: inline-block;
+      padding: 3px 12px;
+      border-radius: 999px;
+      font-size: 0.75rem;
+      font-weight: 700;
+    }
+    .level-normal   { background: rgba(47,191,133,.13);  color: #065F46; }
+    .level-warning  { background: rgba(245,165,36,.13);  color: #92400E; }
+    .level-blockage { background: rgba(242,85,74,.13);   color: #991B1B; }
+    .level-critical { background: rgba(214,58,58,.18);   color: #7F1D1D; }
+    .level-material { background: rgba(14,143,138,.12);  color: #134E4A; }
+
+    /* ================================================================
+       FOOTER
+       ================================================================ */
+    footer {
+      text-align: center;
+      padding: 28px 0 8px;
+      font-size: 0.8rem;
+      color: var(--muted);
+      border-top: 1.5px solid var(--line);
+    }
+
+    /* ================================================================
+       RESPONSIVE
+       ================================================================ */
     @media (max-width: 1050px) {
-      #cards  { grid-template-columns: repeat(3, 1fr); }
+      #cards { grid-template-columns: repeat(3, 1fr); }
     }
     @media (max-width: 700px) {
       #cards  { grid-template-columns: repeat(2, 1fr); }
       #charts { grid-template-columns: 1fr; }
+      header h1 { font-size: 1.1rem; }
     }
     @media (max-width: 480px) {
-      #cards  { grid-template-columns: 1fr; }
+      #cards { grid-template-columns: 1fr; }
+      .page-wrap { padding: 0 12px 28px; }
+    }
+    @media (max-width: 360px) {
+      #cards { grid-template-columns: 1fr; }
+      header h1 { font-size: 1rem; }
+      #status-title { font-size: 1.3rem; }
     }
   </style>
 </head>
 <body>
+
+  <!-- ================================================================
+       HEADER
+       ================================================================ -->
   <header>
-    <h1>Smart Drainage Monitoring System</h1>
-    <span id="connection-status">Connecting...</span>
+    <div class="header-inner">
+      <div class="header-left">
+        <div class="header-logo">
+          <!-- Water-drop inline SVG logo -->
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+            <path d="M12 2C12 2 5 10 5 15a7 7 0 0 0 14 0C19 10 12 2 12 2z"
+                  fill="#0E8F8A" opacity="0.9"/>
+            <path d="M12 7C12 7 8 12.5 8 15a4 4 0 0 0 8 0C16 12.5 12 7 12 7z"
+                  fill="rgba(255,255,255,0.4)"/>
+          </svg>
+        </div>
+        <h1>Smart Drainage Monitoring System</h1>
+      </div>
+      <div class="header-right">
+        <button id="theme-toggle" onclick="toggleTheme()" aria-label="Toggle theme">
+          <svg id="theme-icon" width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M21 12.79A9 9 0 1 1 11.21 3a7 7 0 0 0 9.79 9.79z"/>
+          </svg>
+          <span id="theme-label">Light</span>
+        </button>
+        <span id="connection-status">Connecting...</span>
+      </div>
+    </div>
   </header>
 
-  <!-- Status banner -->
-  <div id="status-banner">
-    <div id="status-title">Waiting for sensor data</div>
-    <ul id="status-reasons"></ul>
-    <div id="status-eta"></div>
-  </div>
+  <div class="page-wrap">
 
-  <!-- SVG channel drawing -->
-  <div id="channel-section">
-    <h3>Channel view (left to right: upstream to downstream)</h3>
-    <svg id="channel-svg" viewBox="0 0 720 380" xmlns="http://www.w3.org/2000/svg"
-         role="img" aria-label="Drainage channel diagram">
-      <!-- Flow direction label -->
-      <text x="360" y="20" text-anchor="middle" class="s-small">flow direction</text>
-      <text x="690" y="20" text-anchor="end" class="s-small">></text>
-
-      <!-- Channel top line (dashed) -->
-      <line id="ch-top" class="ch-top-line" x1="40" y1="70" x2="680" y2="70"/>
-      <text id="ch-top-label" x="675" y="66" text-anchor="end" class="s-small">channel top</text>
-
-      <!-- Overflow line (dashed red) -->
-      <line id="overflow-line" class="overflow-line" x1="40" y1="118" x2="680" y2="118"/>
-      <text id="overflow-label" x="675" y="114" text-anchor="end" class="s-small">overflow level</text>
-
-      <!-- Connector segments (behind columns) -->
-      <rect id="seg-ab" class="connector" x="160" y="270" width="130" height="40" rx="2"/>
-      <rect id="seg-bc" class="connector" x="390" y="270" width="130" height="40" rx="2"/>
-      <rect id="seg-ac" class="connector" x="620" y="270" width="60"  height="40" rx="2"/>
-
-      <!-- Segment labels -->
-      <text id="seg-label-ab" class="s-seg" x="225" y="262" text-anchor="middle"></text>
-      <text id="seg-label-bc" class="s-seg" x="455" y="262" text-anchor="middle"></text>
-      <text id="seg-label-ac" class="s-seg" x="650" y="262" text-anchor="middle"></text>
-
-      <!-- Object detected indicator (shown when IR sensor detects an object) -->
-      <circle id="obj-dot" cx="455" cy="250" r="7" fill="#7c3aed" opacity="0"/>
-      <text id="obj-label" x="455" y="240" text-anchor="middle"
-            class="s-small" fill="#7c3aed" opacity="0">object detected</text>
-
-      <!-- Column A (upstream) -->
-      <rect id="col-a" class="wall" x="60"  y="70" width="100" height="240" rx="4"/>
-      <rect id="water-a" class="water" x="62" width="96" rx="2"/>
-      <text x="110" y="328" text-anchor="middle" class="s-label">Point A</text>
-      <text id="depth-a" x="110" y="348" text-anchor="middle" class="s-depth">-- cm</text>
-
-      <!-- Column B (midstream) -->
-      <rect id="col-b" class="wall" x="290" y="70" width="100" height="240" rx="4"/>
-      <rect id="water-b" class="water" x="292" width="96" rx="2"/>
-      <text x="340" y="328" text-anchor="middle" class="s-label">Point B</text>
-      <text id="depth-b" x="340" y="348" text-anchor="middle" class="s-depth">-- cm</text>
-
-      <!-- Column C (downstream) -->
-      <rect id="col-c" class="wall" x="520" y="70" width="100" height="240" rx="4"/>
-      <rect id="water-c" class="water" x="522" width="96" rx="2"/>
-      <text x="570" y="328" text-anchor="middle" class="s-label">Point C</text>
-      <text id="depth-c" x="570" y="348" text-anchor="middle" class="s-depth">-- cm</text>
-    </svg>
-  </div>
-
-  <!-- Number cards -->
-  <div id="cards">
-    <div class="card">
-      <span class="card-label">Flow</span>
-      <span class="card-value" id="card-flow">--</span>
-      <span class="card-unit">L/min</span>
-    </div>
-    <div class="card">
-      <span class="card-label">Water temperature</span>
-      <span class="card-value" id="card-temp">--</span>
-      <span class="card-unit">&deg;C</span>
-    </div>
-    <div class="card">
-      <span class="card-label">Time to overflow</span>
-      <span class="card-value" id="card-eta">--</span>
-      <span class="card-unit">min</span>
-    </div>
-    <div class="card">
-      <span class="card-label">Detected material</span>
-      <span class="card-value" id="card-material">--</span>
-      <span class="card-unit" id="card-material-detail">no data</span>
-    </div>
-    <div class="card card-cause-wrap" id="card-cause-card">
-      <span class="card-label">Blockage cause</span>
-      <span class="card-value" id="card-cause">--</span>
-      <span class="card-unit" id="card-cause-detail">no active blockage</span>
-      <span class="card-advice" id="card-cause-advice"></span>
-    </div>
-  </div>
-
-  <!-- Charts -->
-  <div id="charts">
-    <div class="chart-box">
-      <h3>Water depth over time (cm)</h3>
-      <div class="chart-wrap">
-        <canvas id="depth-chart"></canvas>
+    <!-- ================================================================
+         STATUS BANNER
+         ================================================================ -->
+    <div id="status-banner" class="normal">
+      <div class="banner-row">
+        <div class="banner-icon" id="banner-icon">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#2FBF85" stroke-width="2.5">
+            <polyline points="20 6 9 17 4 12"/>
+          </svg>
+        </div>
+        <div class="banner-body">
+          <div id="status-title">Waiting for sensor data</div>
+          <ul id="status-reasons"></ul>
+          <div id="status-eta"></div>
+        </div>
       </div>
     </div>
-    <div class="chart-box">
-      <h3>Flow rate over time (L/min)</h3>
-      <div class="chart-wrap">
-        <canvas id="flow-chart"></canvas>
+
+    <!-- ================================================================
+         CHANNEL VIEW
+         ================================================================ -->
+    <div id="channel-section" class="glass">
+      <div class="section-label">Channel view &nbsp;·&nbsp; upstream &nbsp;→&nbsp; downstream</div>
+      <svg id="channel-svg" viewBox="0 0 720 390" xmlns="http://www.w3.org/2000/svg"
+           role="img" aria-label="Drainage channel diagram">
+        <defs>
+          <!-- Water gradient — teal per spec -->
+          <linearGradient id="water-grad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%"   stop-color="#7FD6D0" stop-opacity="1"/>
+            <stop offset="100%" stop-color="#0E8F8A" stop-opacity="1"/>
+          </linearGradient>
+          <!-- Subtle inner highlight on tube walls -->
+          <linearGradient id="glass-grad" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0%"   stop-color="rgba(255,255,255,0.35)"/>
+            <stop offset="40%"  stop-color="rgba(255,255,255,0.08)"/>
+            <stop offset="100%" stop-color="rgba(0,0,0,0)"/>
+          </linearGradient>
+          <!-- Drop shadow for segment highlight -->
+          <filter id="glow-warning" x="-20%" y="-20%" width="140%" height="140%">
+            <feGaussianBlur in="SourceGraphic" stdDeviation="3" result="blur"/>
+            <feComposite in="SourceGraphic" in2="blur" operator="over"/>
+          </filter>
+          <filter id="glow-danger" x="-20%" y="-20%" width="140%" height="140%">
+            <feGaussianBlur in="SourceGraphic" stdDeviation="5" result="blur"/>
+            <feComposite in="SourceGraphic" in2="blur" operator="over"/>
+          </filter>
+        </defs>
+
+        <!-- Flow direction label -->
+        <text x="360" y="18" text-anchor="middle" class="s-small">flow direction</text>
+        <!-- Animated arrow -->
+        <g>
+          <text x="590" y="18" text-anchor="middle" class="s-small">
+            <animate attributeName="opacity" values="0.3;1;0.3" dur="2s" repeatCount="indefinite"/>
+            → → →
+          </text>
+        </g>
+
+        <!-- Channel top line (dashed) -->
+        <line id="ch-top" class="ch-top-line" x1="40" y1="70" x2="680" y2="70"/>
+        <text id="ch-top-label" x="675" y="66" text-anchor="end" class="s-small">channel top</text>
+
+        <!-- Overflow line -->
+        <line id="overflow-line" class="overflow-line" x1="40" y1="118" x2="680" y2="118"/>
+        <text id="overflow-label" x="675" y="114" text-anchor="end" class="s-small" fill="#D63A3A">overflow</text>
+
+        <!-- Connector segments -->
+        <rect id="seg-ab" class="connector" x="160" y="265" width="130" height="45" rx="8"/>
+        <rect id="seg-bc" class="connector" x="390" y="265" width="130" height="45" rx="8"/>
+        <rect id="seg-ac" class="connector" x="620" y="265" width="60"  height="45" rx="8"/>
+
+        <!-- Segment labels -->
+        <text id="seg-label-ab" class="s-seg" x="225" y="258" text-anchor="middle"></text>
+        <text id="seg-label-bc" class="s-seg" x="455" y="258" text-anchor="middle"></text>
+        <text id="seg-label-ac" class="s-seg" x="650" y="258" text-anchor="middle"></text>
+
+        <!-- Object detected indicator — ring + dot (purple per previous design) -->
+        <circle id="obj-ring"  cx="455" cy="248" r="13" fill="none" stroke="#8B6CF0" stroke-width="2" opacity="0">
+          <animate attributeName="r" values="11;16;11" dur="1.8s" repeatCount="indefinite"/>
+          <animate attributeName="opacity" values="0.6;0.1;0.6" dur="1.8s" repeatCount="indefinite"/>
+        </circle>
+        <circle id="obj-dot"   cx="455" cy="248" r="6" fill="#8B6CF0" opacity="0"/>
+        <text   id="obj-label" x="455" y="236" text-anchor="middle" class="s-small" fill="#8B6CF0" opacity="0">object detected</text>
+
+        <!-- ---- Column A (upstream) ---- -->
+        <rect id="col-a" class="wall" x="60" y="70" width="100" height="245" rx="12"/>
+        <rect x="60" y="70" width="100" height="245" rx="12" fill="url(#glass-grad)"/>
+        <rect id="water-a" class="water" x="62" width="96" rx="6"/>
+        <text x="110" y="334" text-anchor="middle" class="s-label">Point A</text>
+        <text x="110" y="350" text-anchor="middle" class="s-small">upstream</text>
+        <text id="depth-a" x="110" y="368" text-anchor="middle" class="s-depth">-- cm</text>
+
+        <!-- ---- Column B (midstream) ---- -->
+        <rect id="col-b" class="wall" x="290" y="70" width="100" height="245" rx="12"/>
+        <rect x="290" y="70" width="100" height="245" rx="12" fill="url(#glass-grad)"/>
+        <rect id="water-b" class="water" x="292" width="96" rx="6"/>
+        <text x="340" y="334" text-anchor="middle" class="s-label">Point B</text>
+        <text x="340" y="350" text-anchor="middle" class="s-small">midstream</text>
+        <text id="depth-b" x="340" y="368" text-anchor="middle" class="s-depth">-- cm</text>
+
+        <!-- ---- Column C (downstream) ---- -->
+        <rect id="col-c" class="wall" x="520" y="70" width="100" height="245" rx="12"/>
+        <rect x="520" y="70" width="100" height="245" rx="12" fill="url(#glass-grad)"/>
+        <rect id="water-c" class="water" x="522" width="96" rx="6"/>
+        <text x="570" y="334" text-anchor="middle" class="s-label">Point C</text>
+        <text x="570" y="350" text-anchor="middle" class="s-small">downstream</text>
+        <text id="depth-c" x="570" y="368" text-anchor="middle" class="s-depth">-- cm</text>
+      </svg>
+    </div>
+
+    <!-- ================================================================
+         METRIC CARDS
+         ================================================================ -->
+    <div id="cards">
+
+      <!-- Flow -->
+      <div class="card glass">
+        <div class="card-icon">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#0E8F8A" stroke-width="2.2">
+            <path d="M22 12H2M2 12l5-5M2 12l5 5"/>
+            <path d="M22 6a4 4 0 0 1-4 4 4 4 0 0 1-4-4 4 4 0 0 1 4-4 4 4 0 0 1 4 4z" stroke-width="1.5"/>
+          </svg>
+        </div>
+        <span class="card-label">Flow rate</span>
+        <span class="card-value" id="card-flow">--</span>
+        <span class="card-unit">L / min</span>
+      </div>
+
+      <!-- Temperature -->
+      <div class="card glass">
+        <div class="card-icon">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#0E8F8A" stroke-width="2.2">
+            <path d="M14 14.76V3.5a2.5 2.5 0 0 0-5 0v11.26a4.5 4.5 0 1 0 5 0z"/>
+          </svg>
+        </div>
+        <span class="card-label">Water temperature</span>
+        <span class="card-value" id="card-temp">--</span>
+        <span class="card-unit">&deg;C</span>
+      </div>
+
+      <!-- Time to overflow -->
+      <div class="card glass">
+        <div class="card-icon">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#0E8F8A" stroke-width="2.2">
+            <circle cx="12" cy="12" r="9"/>
+            <polyline points="12 7 12 12 15 15"/>
+          </svg>
+        </div>
+        <span class="card-label">Time to overflow</span>
+        <span class="card-value" id="card-eta">--</span>
+        <span class="card-unit">min</span>
+      </div>
+
+      <!-- Detected material -->
+      <div class="card glass">
+        <div class="card-icon">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#0E8F8A" stroke-width="2.2">
+            <circle cx="12" cy="12" r="3"/>
+            <path d="M12 1v3M12 20v3M4.22 4.22l2.12 2.12M17.66 17.66l2.12 2.12M1 12h3M20 12h3M4.22 19.78l2.12-2.12M17.66 6.34l2.12-2.12"/>
+          </svg>
+        </div>
+        <span class="card-label">Detected material</span>
+        <span class="card-value" id="card-material">--</span>
+        <span class="card-unit" id="card-material-detail">no data</span>
+      </div>
+
+      <!-- Blockage cause -->
+      <div class="card glass" id="card-cause-card">
+        <div class="card-icon">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#0E8F8A" stroke-width="2.2">
+            <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+            <line x1="12" y1="9" x2="12" y2="13"/>
+            <line x1="12" y1="17" x2="12.01" y2="17"/>
+          </svg>
+        </div>
+        <span class="card-label">Blockage cause</span>
+        <span class="card-value" id="card-cause">--</span>
+        <span class="card-unit" id="card-cause-detail">no active blockage</span>
+        <span class="card-advice" id="card-cause-advice"></span>
+      </div>
+
+    </div><!-- /#cards -->
+
+    <!-- ================================================================
+         CHARTS
+         ================================================================ -->
+    <div id="charts">
+      <div class="chart-box glass">
+        <h3>Water depth over time (cm)</h3>
+        <div class="chart-wrap">
+          <canvas id="depth-chart"></canvas>
+        </div>
+      </div>
+      <div class="chart-box glass">
+        <h3>Flow rate over time (L / min)</h3>
+        <div class="chart-wrap">
+          <canvas id="flow-chart"></canvas>
+        </div>
       </div>
     </div>
-  </div>
 
-  <!-- Material detection summary -->
-  <div id="mat-summary-section">
-    <h3>Material detections (this session)</h3>
-    <div id="mat-summary-bars"></div>
-  </div>
+    <!-- ================================================================
+         MATERIAL SUMMARY
+         ================================================================ -->
+    <div id="mat-summary-section" class="glass">
+      <div class="section-label">Material detections &nbsp;·&nbsp; this session</div>
+      <div id="mat-summary-bars">
+        <span style="font-size:0.85rem;color:var(--muted)">No material detections yet</span>
+      </div>
+    </div>
 
-  <!-- Alert log -->
-  <div id="alerts-section">
-    <h3>Alert log</h3>
-    <table>
-      <thead>
-        <tr><th>Time</th><th>Level</th><th>Details</th></tr>
-      </thead>
-      <tbody id="alert-body">
-        <tr><td colspan="3">No alerts yet</td></tr>
-      </tbody>
-    </table>
-  </div>
+    <!-- ================================================================
+         ALERT LOG
+         ================================================================ -->
+    <div id="alerts-section" class="glass">
+      <div class="section-label">Alert log</div>
+      <table>
+        <thead>
+          <tr><th>Time</th><th>Level</th><th>Details</th></tr>
+        </thead>
+        <tbody id="alert-body">
+          <tr><td colspan="3" style="color:var(--muted)">No alerts yet</td></tr>
+        </tbody>
+      </table>
+    </div>
 
+    <!-- ================================================================
+         FOOTER
+         ================================================================ -->
+    <footer>
+      Smart Drainage Blockage Detection and Material Identification System
+    </footer>
+
+  </div><!-- /.page-wrap -->
+
+  <!-- ================================================================
+       JAVASCRIPT — all original logic preserved; only Chart.js colours
+       and icon stroke colours updated to match the new design.
+       ================================================================ -->
   <script>
     /* ============================================================
        Smart Drainage Monitoring System - Dashboard JavaScript
@@ -426,11 +947,11 @@
        ============================================================ */
 
     var REFRESH_MS = 3000;
-    var SVG_SCALE = 16;      // pixels per cm in the SVG
-    var SVG_BOTTOM = 310;    // y-coordinate of the channel floor
-    var config = null;
+    var SVG_SCALE  = 16;      // pixels per cm in the SVG
+    var SVG_BOTTOM = 315;     // y-coordinate of the channel floor (adjusted for taller SVG)
+    var config     = null;
     var depthChart = null;
-    var flowChart = null;
+    var flowChart  = null;
     var chartsReady = (typeof Chart !== "undefined");
 
     // Human-readable location text for the status banner
@@ -443,6 +964,30 @@
 
     // Map analysis location to SVG segment id suffix
     var LOC_SEG = { "A-B": "ab", "B-C": "bc", "after C": "ac" };
+
+    /* ---- Theme toggle ---- */
+    var currentTheme = "light";
+    function toggleTheme() {
+      currentTheme = (currentTheme === "dark") ? "light" : "dark";
+      document.documentElement.setAttribute("data-theme", currentTheme);
+      var label = document.getElementById("theme-label");
+      var icon  = document.getElementById("theme-icon");
+      if (currentTheme === "light") {
+        label.textContent = "Light";
+        icon.innerHTML = '<path d="M21 12.79A9 9 0 1 1 11.21 3a7 7 0 0 0 9.79 9.79z"/>';
+      } else {
+        label.textContent = "Dark";
+        icon.innerHTML = '<circle cx="12" cy="12" r="5"/>'
+          + '<line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/>'
+          + '<line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/>'
+          + '<line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>'
+          + '<line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/>'
+          + '<line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/>'
+          + '<line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>';
+      }
+      // Rebuild charts with correct colors for the new theme
+      rebuildCharts();
+    }
 
     /* ---- Utility: format a Unix timestamp as HH:MM:SS ---- */
     function fmtTime(ts) {
@@ -460,10 +1005,18 @@
         el.textContent = "Sensor offline";
         el.classList.add("offline");
       } else {
-        el.textContent = "Live, updated " + Math.round(ageS) + " s ago";
+        el.textContent = "Live \u00b7 " + Math.round(ageS) + "s ago";
         el.classList.add("live");
       }
     }
+
+    /* ---- Banner icon SVG strings per state (updated stroke colours) ---- */
+    var BANNER_ICONS = {
+      normal:   { stroke: "#2FBF85", path: '<polyline points="20 6 9 17 4 12"/>' },
+      warning:  { stroke: "#F5A524", path: '<line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>' },
+      blockage: { stroke: "#F2554A", path: '<circle cx="12" cy="12" r="9"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/>' },
+      critical: { stroke: "#D63A3A", path: '<path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/>' }
+    };
 
     /* ---- Update the status banner ---- */
     function updateBanner(analysis, material) {
@@ -471,20 +1024,24 @@
       var title   = document.getElementById("status-title");
       var reasons = document.getElementById("status-reasons");
       var eta     = document.getElementById("status-eta");
+      var iconBox = document.getElementById("banner-icon");
 
       banner.className = "";
       reasons.innerHTML = "";
       eta.textContent = "";
 
       var s = analysis.status;
+      var ico = BANNER_ICONS.normal;
 
       if (s === "NORMAL") {
         banner.classList.add("normal");
         title.textContent = "Drain flowing normally";
+        ico = BANNER_ICONS.normal;
       } else if (s === "WARNING") {
         banner.classList.add("warning");
         title.textContent = "Early warning: " +
             (LOC_TEXT[analysis.location] || analysis.location);
+        ico = BANNER_ICONS.warning;
       } else if (s === "BLOCKAGE") {
         banner.classList.add("blockage");
         if (analysis.confirmed) {
@@ -494,10 +1051,15 @@
           title.textContent = "Blockage detected: " +
               (LOC_TEXT[analysis.location] || analysis.location);
         }
+        ico = BANNER_ICONS.blockage;
       } else if (s === "CRITICAL") {
         banner.classList.add("critical");
         title.textContent = "Overflow risk";
+        ico = BANNER_ICONS.critical;
       }
+
+      iconBox.innerHTML = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" '
+        + 'stroke="' + ico.stroke + '" stroke-width="2.5">' + ico.path + '</svg>';
 
       if (analysis.reasons && analysis.reasons.length > 0) {
         analysis.reasons.forEach(function(r) {
@@ -603,6 +1165,7 @@
 
       // Object detected indicator (from IR sensor)
       var objDot   = document.getElementById("obj-dot");
+      var objRing  = document.getElementById("obj-ring");
       var objLabel = document.getElementById("obj-label");
       if (material && material.ir_detected) {
         // Position at the suspected blockage segment, or default to B-C
@@ -610,11 +1173,14 @@
         var locKey = LOC_SEG[analysis.location] || "bc";
         var x = segX[locKey] || 455;
         objDot.setAttribute("cx", x);
+        objRing.setAttribute("cx", x);
         objLabel.setAttribute("x", x);
         objDot.setAttribute("opacity", "0.9");
+        objRing.setAttribute("opacity", "0.6");
         objLabel.setAttribute("opacity", "1");
       } else {
         objDot.setAttribute("opacity", "0");
+        objRing.setAttribute("opacity", "0");
         objLabel.setAttribute("opacity", "0");
       }
     }
@@ -634,10 +1200,10 @@
 
     /* ---- Update the detected-material card ---- */
     function updateMaterial(material) {
-      var card = document.getElementById("card-material");
+      var card   = document.getElementById("card-material");
       var detail = document.getElementById("card-material-detail");
       if (!material) {
-        card.textContent = "--";
+        card.textContent   = "--";
         detail.textContent = "no data";
         return;
       }
@@ -649,7 +1215,7 @@
       if (material.ir_detected) {
         parts.push("IR detected");
       }
-      detail.textContent = parts.length > 0 ? parts.join(", ") : "detected";
+      detail.textContent = parts.length > 0 ? parts.join(" · ") : "detected";
     }
 
     /* ---- Update the blockage cause card ---- */
@@ -663,7 +1229,7 @@
         cardVal.textContent    = "--";
         cardDetail.textContent = "no active blockage";
         cardAdvice.textContent = "";
-        cardWrap.style.borderLeftColor = "";
+        cardWrap.classList.remove("active");
         return;
       }
 
@@ -673,13 +1239,18 @@
                   : "";
       cardDetail.textContent = cause.material + pct;
       cardAdvice.textContent = cause.advice || "";
-      // Highlight card border in blockage red when a cause is active
-      cardWrap.style.borderLeftWidth = "4px";
-      cardWrap.style.borderLeftColor = "var(--blockage)";
+      cardWrap.classList.add("active");
     }
 
     /* ---- Material detection counters (accumulate since page load) ---- */
     var matCounts = {};   // { "PLASTIC": 3, "SAND": 1, ... }
+
+    /* Material hex colours matching the spec, used for bar gradient fills */
+    var MAT_COLORS = {
+      PLASTIC: "#3B82F6", SAND:    "#E0A93B", GRAVEL:  "#A08A76",
+      ROCK:    "#6B7A8F", WOOD:    "#B9764A", RUBBER:  "#8B6CF0",
+      OTHER:   "#14B8A6", UNKNOWN: "#94A3B8"
+    };
 
     function trackMaterial(material) {
       // Only track identifiable, non-UNKNOWN detections
@@ -695,19 +1266,39 @@
       var keys = Object.keys(matCounts);
       if (keys.length === 0) {
         container.innerHTML =
-            '<span style="font-size:0.8rem;color:var(--text-muted)">No material detections yet</span>';
+            '<span style="font-size:0.85rem;color:var(--muted)">No material detections yet</span>';
         return;
       }
       // Sort by count descending
       keys.sort(function(a, b) { return matCounts[b] - matCounts[a]; });
+      var maxCount = matCounts[keys[0]] || 1;
       container.innerHTML = keys.map(function(m) {
-        return '<span class="mat-pill"><span class="mat-pill-count">' +
-               matCounts[m] + '</span>' + m + '</span>';
+        var pct   = Math.max(6, Math.round((matCounts[m] / maxCount) * 100));
+        var color = MAT_COLORS[m] || "#94A3B8";
+        var badgeCls = "mat-" + m;
+        return '<div class="mat-pill">'
+             + '<span class="mat-pill-count">' + matCounts[m] + '</span>'
+             + '<span class="' + badgeCls
+             +   '" style="display:inline-block;padding:2px 10px;border-radius:999px;font-size:0.75rem;font-weight:700;">'
+             + m + '</span>'
+             + '<div style="flex:1;height:6px;background:var(--line);border-radius:999px;overflow:hidden;">'
+             +   '<div style="height:100%;width:' + pct + '%;background:' + color
+             +     ';border-radius:999px;transition:width .5s;opacity:.75;"></div>'
+             + '</div>'
+             + '</div>';
       }).join("");
     }
 
     // Track the last material we saw so we only count new ones
     var lastTrackedMaterialTs = 0;
+
+    /* ---- Chart colors ---- */
+    function getChartColors() {
+      return {
+        textMuted: "#5B7480",
+        gridColor: "#DCEAE8"
+      };
+    }
 
     /* ---- Initialise Chart.js charts (called once on page load) ---- */
     function initCharts() {
@@ -717,35 +1308,49 @@
             "(Chart.js could not be loaded)</p>";
         return;
       }
+      buildCharts();
+    }
 
-      var textColor =
-          getComputedStyle(document.documentElement)
-              .getPropertyValue("--text-muted").trim() || "#64748b";
-      var gridColor = "rgba(148, 163, 184, 0.12)";
+    function buildCharts() {
+      var cc = getChartColors();
 
       var commonOpts = {
         responsive: true,
         maintainAspectRatio: false,
-        animation: { duration: 0 },
+        animation: { duration: 400 },
         interaction: { mode: "index", intersect: false },
         scales: {
           x: {
-            ticks: { color: textColor, maxRotation: 0, autoSkipPadding: 20 },
-            grid:  { color: gridColor }
+            ticks: { color: cc.textMuted, maxRotation: 0, autoSkipPadding: 20,
+                     font: { family: "'Nunito', sans-serif", size: 10 } },
+            grid:  { color: cc.gridColor }
           },
           y: {
             beginAtZero: true,
-            ticks: { color: textColor },
-            grid:  { color: gridColor }
+            ticks: { color: cc.textMuted,
+                     font: { family: "'Nunito', sans-serif", size: 10 } },
+            grid:  { color: cc.gridColor }
           }
         },
         plugins: {
-          legend: { labels: { color: textColor, font: { size: 11 } } },
-          tooltip: { mode: "index", intersect: false }
+          legend: { labels: { color: cc.textMuted,
+                               font: { family: "'Nunito', sans-serif", size: 11 },
+                               boxWidth: 12, usePointStyle: true } },
+          tooltip: {
+            mode: "index",
+            intersect: false,
+            backgroundColor: "#12303A",
+            titleColor: "#F2F8F7",
+            bodyColor: "#5B7480",
+            borderColor: "#DCEAE8",
+            borderWidth: 1,
+            cornerRadius: 12,
+            padding: 12
+          }
         }
       };
 
-      // Depth chart: three lines + dashed overflow line
+      // Depth chart: A=#0E8F8A, B=#3B82F6, C=#F5A524, overflow dashed #F2554A
       depthChart = new Chart(
           document.getElementById("depth-chart").getContext("2d"),
           {
@@ -753,30 +1358,29 @@
             data: {
               labels: [],
               datasets: [
-                { label: "Depth A", data: [], borderColor: "#3b82f6",
-                  backgroundColor: "rgba(59,130,246,0.08)", tension: 0.3,
-                  pointRadius: 0, borderWidth: 2, fill: false },
-                { label: "Depth B", data: [], borderColor: "#10b981",
-                  backgroundColor: "rgba(16,185,129,0.08)", tension: 0.3,
-                  pointRadius: 0, borderWidth: 2, fill: false },
-                { label: "Depth C", data: [], borderColor: "#f59e0b",
-                  backgroundColor: "rgba(245,158,11,0.08)", tension: 0.3,
-                  pointRadius: 0, borderWidth: 2, fill: false },
-                { label: "Overflow", data: [], borderColor: "#ef4444",
+                { label: "Depth A", data: [], borderColor: "#0E8F8A",
+                  backgroundColor: "rgba(14,143,138,0.10)", tension: 0.4,
+                  pointRadius: 0, borderWidth: 2, fill: true },
+                { label: "Depth B", data: [], borderColor: "#3B82F6",
+                  backgroundColor: "rgba(59,130,246,0.08)", tension: 0.4,
+                  pointRadius: 0, borderWidth: 2, fill: true },
+                { label: "Depth C", data: [], borderColor: "#F5A524",
+                  backgroundColor: "rgba(245,165,36,0.07)", tension: 0.4,
+                  pointRadius: 0, borderWidth: 2, fill: true },
+                { label: "Overflow", data: [], borderColor: "rgba(242,85,74,0.7)",
                   borderDash: [6, 4], pointRadius: 0, borderWidth: 1.5,
                   fill: false }
               ]
             },
             options: Object.assign({}, commonOpts, {
               scales: Object.assign({}, commonOpts.scales, {
-                y: Object.assign({}, commonOpts.scales.y,
-                                 { suggestedMax: 15 })
+                y: Object.assign({}, commonOpts.scales.y, { suggestedMax: 15 })
               })
             })
           }
       );
 
-      // Flow chart
+      // Flow chart: #0E8F8A line with 12% fill
       flowChart = new Chart(
           document.getElementById("flow-chart").getContext("2d"),
           {
@@ -784,8 +1388,8 @@
             data: {
               labels: [],
               datasets: [
-                { label: "Flow", data: [], borderColor: "#06b6d4",
-                  backgroundColor: "rgba(6,182,212,0.12)", tension: 0.3,
+                { label: "Flow", data: [], borderColor: "#0E8F8A",
+                  backgroundColor: "rgba(14,143,138,0.12)", tension: 0.4,
                   pointRadius: 0, borderWidth: 2, fill: true }
               ]
             },
@@ -794,46 +1398,47 @@
       );
     }
 
+    /* Rebuild charts after a theme change to pick up correct CSS variables */
+    function rebuildCharts() {
+      if (!chartsReady) return;
+      if (depthChart) { depthChart.destroy(); depthChart = null; }
+      if (flowChart)  { flowChart.destroy();  flowChart  = null; }
+      buildCharts();
+    }
+
     /* ---- Update chart data from history ---- */
     function updateCharts(history, cfg) {
       if (!depthChart || !flowChart) return;
       var readings = history.readings || [];
-      var labels = readings.map(function(r) { return fmtTime(r.ts); });
+      var labels   = readings.map(function(r) { return fmtTime(r.ts); });
 
       depthChart.data.labels = labels;
-      depthChart.data.datasets[0].data =
-          readings.map(function(r) { return r.depth_a; });
-      depthChart.data.datasets[1].data =
-          readings.map(function(r) { return r.depth_b; });
-      depthChart.data.datasets[2].data =
-          readings.map(function(r) { return r.depth_c; });
-      depthChart.data.datasets[3].data =
-          readings.map(function() { return cfg.OVERFLOW_CM; });
+      depthChart.data.datasets[0].data = readings.map(function(r) { return r.depth_a; });
+      depthChart.data.datasets[1].data = readings.map(function(r) { return r.depth_b; });
+      depthChart.data.datasets[2].data = readings.map(function(r) { return r.depth_c; });
+      depthChart.data.datasets[3].data = readings.map(function()  { return cfg.OVERFLOW_CM; });
       depthChart.update("none");
 
       flowChart.data.labels = labels;
-      flowChart.data.datasets[0].data =
-          readings.map(function(r) { return r.flow; });
+      flowChart.data.datasets[0].data = readings.map(function(r) { return r.flow; });
       flowChart.update("none");
     }
 
     /* ---- Update alert log table ---- */
     function updateAlerts(alerts) {
       var tbody = document.getElementById("alert-body");
-      var list = alerts.alerts || [];
+      var list  = alerts.alerts || [];
       if (list.length === 0) {
-        tbody.innerHTML = "<tr><td colspan=\"3\">No alerts yet</td></tr>";
+        tbody.innerHTML = '<tr><td colspan="3" style="color:var(--muted)">No alerts yet</td></tr>';
         return;
       }
       tbody.innerHTML = list.map(function(a) {
         var cls = "level-" + a.status.toLowerCase();
-        // The message already contains "Blockage B-C, cause: PLASTIC" when
-        // the backend identified a cause.  Show it as-is.
-        return "<tr>" +
-            "<td>" + fmtTime(a.ts) + "</td>" +
-            '<td class="' + cls + '">' + a.status + "</td>" +
-            "<td>" + a.message + "</td>" +
-            "</tr>";
+        return "<tr>"
+             + "<td style='color:var(--muted);font-size:0.82rem;white-space:nowrap'>" + fmtTime(a.ts) + "</td>"
+             + '<td><span class="' + cls + '">' + a.status + "</span></td>"
+             + "<td>" + a.message + "</td>"
+             + "</tr>";
       }).join("");
     }
 
@@ -842,8 +1447,7 @@
       var el = document.getElementById("connection-status");
       el.textContent = "Waiting for sensor data";
       el.classList.remove("live", "offline");
-      document.getElementById("status-title").textContent =
-          "Waiting for sensor data";
+      document.getElementById("status-title").textContent = "Waiting for sensor data";
       document.getElementById("status-reasons").innerHTML = "";
       document.getElementById("status-eta").textContent = "";
       document.getElementById("card-material").textContent = "--";
@@ -859,8 +1463,7 @@
         fetch("/api/alerts?n=10")
       ])
         .then(function(responses) {
-          return Promise.all(
-              responses.map(function(r) { return r.json(); }));
+          return Promise.all(responses.map(function(r) { return r.json(); }));
         })
         .then(function(data) {
           var latest  = data[0];
@@ -892,7 +1495,6 @@
           updateAlerts(alerts);
         })
         .catch(function() {
-          // Server unreachable or a request failed
           var el = document.getElementById("connection-status");
           el.textContent = "Cannot reach the server";
           el.classList.remove("live");
