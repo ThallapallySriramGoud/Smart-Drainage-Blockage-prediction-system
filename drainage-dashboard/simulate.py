@@ -3,13 +3,17 @@ Smart Drainage Monitoring System - Simulator
 
 Pretends to be the ESP32 and POSTs readings to the server every 2 seconds.
 Three phases:
-  1. 20 readings of normal flow
-  2. 60 readings of a blockage building between B and C (with PLASTIC object)
-  3. 25 readings of the blockage clearing back to normal
+  1. 20 readings of normal flow          – no material detected
+  2. 60 readings of a blockage building  – a randomly chosen material is
+     detected with confidence 0.80-0.95 and ir_detected true every 10 steps
+  3. 25 readings of clearing             – UNKNOWN, ir_detected false
+
+The material for phase 2 is chosen randomly at the start of each run from:
+  PLASTIC, SAND, GRAVEL, ROCK, WOOD, RUBBER
 
 The server URL can be overridden with the SERVER_URL environment variable:
-  set SERVER_URL=http://localhost:5000   (Windows)
-  export SERVER_URL=http://localhost:5000  (Linux/Mac)
+  set SERVER_URL=http://localhost:5000       (Windows)
+  export SERVER_URL=http://localhost:5000    (Linux/Mac)
 
 Run:  python simulate.py
 (make sure app.py or the Render server is running)
@@ -102,9 +106,16 @@ def make_payload(a, b, c, flow, temp):
 
 
 def main():
+    # Pick the material that will be reported during the blockage phase.
+    # Using a fixed pool of identifiable materials (not UNKNOWN/OTHER).
+    BLOCKAGE_MATERIALS = ["PLASTIC", "SAND", "GRAVEL", "ROCK", "WOOD", "RUBBER"]
+    chosen_material = random.choice(BLOCKAGE_MATERIALS)
+
     print("=" * 60)
     print("  Smart Drainage Monitoring System - Simulator")
-    print("  Server: {}".format(BASE_URL))
+    print("  Server:   {}".format(BASE_URL))
+    print("  Material: {} (will be sent during blockage phase)".format(
+        chosen_material))
     print("=" * 60)
     print()
 
@@ -136,10 +147,13 @@ def main():
         payload = make_payload(a, b, c, flow, temp)
         print("[{:3d}] {}".format(i + 21, payload))
         send(payload)
-        # Send material detection every 10 steps during the blockage
+        # Every 10 steps send the chosen material with a randomised confidence
+        # between 0.80 and 0.95 so the blockage cause logic picks it up.
         if i % 10 == 0:
-            print("    [material] PLASTIC, confidence=0.85, ir_detected=True")
-            send_material("PLASTIC", 0.85, True)
+            confidence = round(random.uniform(0.80, 0.95), 2)
+            print("    [material] {}, confidence={}, ir_detected=True".format(
+                chosen_material, confidence))
+            send_material(chosen_material, confidence, True)
         time.sleep(interval)
 
     # --- Phase 3: Blockage clearing back to normal (25 readings) --------

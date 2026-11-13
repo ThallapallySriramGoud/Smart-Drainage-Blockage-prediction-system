@@ -136,7 +136,7 @@
     /* ---- Number cards ---- */
     #cards {
       display: grid;
-      grid-template-columns: repeat(4, 1fr);
+      grid-template-columns: repeat(5, 1fr);
       gap: 12px;
       margin-bottom: 16px;
     }
@@ -158,6 +158,15 @@
     .card-unit {
       font-size: 0.875rem;
       color: var(--text-muted);
+      display: block;
+    }
+    /* Advice text under the blockage-cause card */
+    .card-advice {
+      font-size: 0.75rem;
+      color: var(--warning);
+      display: block;
+      margin-top: 4px;
+      font-style: italic;
     }
 
     /* ---- Charts ---- */
@@ -188,6 +197,50 @@
       color: var(--text-muted);
       padding: 20px;
       text-align: center;
+    }
+
+    /* ---- Material detection summary ---- */
+    #mat-summary-section {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 16px;
+      margin-bottom: 16px;
+    }
+    #mat-summary-section h3 {
+      font-size: 0.875rem;
+      color: var(--text-muted);
+      margin-bottom: 10px;
+      font-weight: 500;
+    }
+    #mat-summary-bars {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .mat-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 3px 10px;
+      font-size: 0.8rem;
+    }
+    .mat-pill-count {
+      font-weight: 700;
+      color: var(--water);
+    }
+    /* IR dot style - kept as supporting evidence indicator */
+    .ir-dot {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #7c3aed;
+      vertical-align: middle;
+      margin-right: 3px;
     }
 
     /* ---- Alert log table ---- */
@@ -224,7 +277,10 @@
     .level-material { color: #7c3aed; font-weight: 600; }
 
     /* ---- Responsive ---- */
-    @media (max-width: 900px) {
+    @media (max-width: 1050px) {
+      #cards  { grid-template-columns: repeat(3, 1fr); }
+    }
+    @media (max-width: 700px) {
       #cards  { grid-template-columns: repeat(2, 1fr); }
       #charts { grid-template-columns: 1fr; }
     }
@@ -320,6 +376,12 @@
       <span class="card-value" id="card-material">--</span>
       <span class="card-unit" id="card-material-detail">no data</span>
     </div>
+    <div class="card card-cause-wrap" id="card-cause-card">
+      <span class="card-label">Blockage cause</span>
+      <span class="card-value" id="card-cause">--</span>
+      <span class="card-unit" id="card-cause-detail">no active blockage</span>
+      <span class="card-advice" id="card-cause-advice"></span>
+    </div>
   </div>
 
   <!-- Charts -->
@@ -336,6 +398,12 @@
         <canvas id="flow-chart"></canvas>
       </div>
     </div>
+  </div>
+
+  <!-- Material detection summary -->
+  <div id="mat-summary-section">
+    <h3>Material detections (this session)</h3>
+    <div id="mat-summary-bars"></div>
   </div>
 
   <!-- Alert log -->
@@ -455,7 +523,7 @@
     }
 
     /* ---- Update the SVG channel drawing ---- */
-    function updateSvg(latest, cfg, analysis, material) {
+    function updateSvg(latest, cfg, analysis, material, blockageCause) {
       var depths = {
         a: latest.depth_a,
         b: latest.depth_b,
@@ -505,7 +573,7 @@
         lbl.classList.remove("danger");
       });
 
-      // Highlight the suspected segment
+      // Highlight the suspected segment; label shows cause when available
       if (analysis.location &&
           (analysis.status === "WARNING" ||
            analysis.status === "BLOCKAGE" ||
@@ -520,7 +588,16 @@
             seg.classList.add("danger");
             lbl.classList.add("danger");
           }
-          lbl.textContent = "suspected blockage";
+          // Build label: "suspected blockage: PLASTIC (85%)" when cause known
+          var causeLabel = "suspected blockage";
+          if (blockageCause && blockageCause.material &&
+              blockageCause.material !== "Not identified") {
+            var pct = blockageCause.confidence !== null
+                ? " (" + Math.round(blockageCause.confidence * 100) + "%)"
+                : "";
+            causeLabel = "suspected blockage: " + blockageCause.material + pct;
+          }
+          lbl.textContent = causeLabel;
         }
       }
 
@@ -574,6 +651,63 @@
       }
       detail.textContent = parts.length > 0 ? parts.join(", ") : "detected";
     }
+
+    /* ---- Update the blockage cause card ---- */
+    function updateBlockageCause(cause) {
+      var cardVal    = document.getElementById("card-cause");
+      var cardDetail = document.getElementById("card-cause-detail");
+      var cardAdvice = document.getElementById("card-cause-advice");
+      var cardWrap   = document.getElementById("card-cause-card");
+
+      if (!cause) {
+        cardVal.textContent    = "--";
+        cardDetail.textContent = "no active blockage";
+        cardAdvice.textContent = "";
+        cardWrap.style.borderLeftColor = "";
+        return;
+      }
+
+      cardVal.textContent = cause.material;
+      var pct = (cause.confidence !== null && cause.confidence !== undefined)
+                  ? " (" + Math.round(cause.confidence * 100) + "%)"
+                  : "";
+      cardDetail.textContent = cause.material + pct;
+      cardAdvice.textContent = cause.advice || "";
+      // Highlight card border in blockage red when a cause is active
+      cardWrap.style.borderLeftWidth = "4px";
+      cardWrap.style.borderLeftColor = "var(--blockage)";
+    }
+
+    /* ---- Material detection counters (accumulate since page load) ---- */
+    var matCounts = {};   // { "PLASTIC": 3, "SAND": 1, ... }
+
+    function trackMaterial(material) {
+      // Only track identifiable, non-UNKNOWN detections
+      if (!material || !material.material || material.material === "UNKNOWN") {
+        return;
+      }
+      var m = material.material;
+      matCounts[m] = (matCounts[m] || 0) + 1;
+    }
+
+    function updateMatSummary() {
+      var container = document.getElementById("mat-summary-bars");
+      var keys = Object.keys(matCounts);
+      if (keys.length === 0) {
+        container.innerHTML =
+            '<span style="font-size:0.8rem;color:var(--text-muted)">No material detections yet</span>';
+        return;
+      }
+      // Sort by count descending
+      keys.sort(function(a, b) { return matCounts[b] - matCounts[a]; });
+      container.innerHTML = keys.map(function(m) {
+        return '<span class="mat-pill"><span class="mat-pill-count">' +
+               matCounts[m] + '</span>' + m + '</span>';
+      }).join("");
+    }
+
+    // Track the last material we saw so we only count new ones
+    var lastTrackedMaterialTs = 0;
 
     /* ---- Initialise Chart.js charts (called once on page load) ---- */
     function initCharts() {
@@ -693,6 +827,8 @@
       }
       tbody.innerHTML = list.map(function(a) {
         var cls = "level-" + a.status.toLowerCase();
+        // The message already contains "Blockage B-C, cause: PLASTIC" when
+        // the backend identified a cause.  Show it as-is.
         return "<tr>" +
             "<td>" + fmtTime(a.ts) + "</td>" +
             '<td class="' + cls + '">' + a.status + "</td>" +
@@ -712,6 +848,7 @@
       document.getElementById("status-eta").textContent = "";
       document.getElementById("card-material").textContent = "--";
       document.getElementById("card-material-detail").textContent = "no data";
+      updateBlockageCause(null);
     }
 
     /* ---- Main refresh loop: poll all three endpoints ---- */
@@ -739,9 +876,18 @@
 
           updateConnection(latest.age_s, config.OFFLINE_AFTER_S);
           updateBanner(latest.analysis, latest.material);
-          updateSvg(latest.latest, config, latest.analysis, latest.material);
+          updateSvg(latest.latest, config, latest.analysis, latest.material,
+                    latest.blockage_cause || null);
           updateCards(latest.latest, latest.analysis);
           updateMaterial(latest.material);
+          updateBlockageCause(latest.blockage_cause || null);
+          // Track new material detections for the summary counter
+          if (latest.material && latest.material.ts &&
+              latest.material.ts > lastTrackedMaterialTs) {
+            trackMaterial(latest.material);
+            lastTrackedMaterialTs = latest.material.ts;
+          }
+          updateMatSummary();
           updateCharts(history, config);
           updateAlerts(alerts);
         })

@@ -285,11 +285,27 @@ def analyse(rows):
 # Material helpers
 # ---------------------------------------------------------------------------
 
-# Allowed material categories
-MATERIALS = ("ROCK", "PLASTIC", "RUBBER", "WOOD", "OTHER", "UNKNOWN")
+# Allowed material categories (GRAVEL and SAND added for finer classification)
+MATERIALS = ("ROCK", "GRAVEL", "SAND", "PLASTIC", "RUBBER", "WOOD", "OTHER", "UNKNOWN")
 
 # Confidence threshold below which we treat the reading as UNKNOWN
 CONFIDENCE_THRESHOLD = 0.6
+
+# How recently a material reading must have been received to count as the
+# blockage cause (seconds).  120 s = 2 minutes.
+CAUSE_WINDOW_S = 120
+
+# Short advice texts shown on the dashboard and returned to the ESP32.
+BLOCKAGE_ADVICE = {
+    "PLASTIC":  "Remove manually, do not flush",
+    "RUBBER":   "Remove manually",
+    "ROCK":     "Remove with tools",
+    "GRAVEL":   "Flush or desilt the channel",
+    "SAND":     "Flush or desilt the channel",
+    "WOOD":     "Remove debris",
+    "OTHER":    "Inspect the channel",
+    "UNKNOWN":  "Inspect the channel",
+}
 
 
 def _latest_material(db):
@@ -305,6 +321,42 @@ def _latest_material(db):
         "material": mat["material"],
         "confidence": mat["confidence"],
         "ir_detected": bool(mat["ir_detected"]),
+    }
+
+
+def _blockage_cause(db):
+    """
+    Return the best material reading to use as the blockage cause, or a
+    'not identified' placeholder.
+
+    Rules:
+    - Must have been received within the last CAUSE_WINDOW_S seconds.
+    - Must have confidence >= CONFIDENCE_THRESHOLD.
+    - Must not be UNKNOWN.
+    - If several readings qualify, pick the most recent one.
+
+    Always returns a dict with keys: material, confidence, advice.
+    """
+    cutoff = time.time() - CAUSE_WINDOW_S
+    row = db.execute(
+        "SELECT material, confidence FROM materials "
+        "WHERE ts >= ? AND confidence >= ? AND material != 'UNKNOWN' "
+        "ORDER BY id DESC LIMIT 1",
+        (cutoff, CONFIDENCE_THRESHOLD)
+    ).fetchone()
+
+    if row:
+        mat = row["material"]
+        return {
+            "material":   mat,
+            "confidence": round(row["confidence"], 2),
+            "advice":     BLOCKAGE_ADVICE.get(mat, BLOCKAGE_ADVICE["OTHER"]),
+        }
+    # Nothing useful in the recent window
+    return {
+        "material":   "Not identified",
+        "confidence": None,
+        "advice":     BLOCKAGE_ADVICE["OTHER"],
     }
 
 
@@ -375,12 +427,20 @@ def api_data():
     )
 
     # --- Log an alert only when (status, location) changes ---------------
+    # Build the blockage cause now so we can embed it in the alert message.
+    cause = _blockage_cause(db) if result["status"] != "NORMAL" else None
+
     changed = (prev is None
                or prev["status"] != result["status"]
                or prev["location"] != result["location"])
     if changed and result["status"] != "NORMAL":
-        message = "; ".join(result["reasons"]) if result["reasons"] \
-                  else result["status"]
+        # Include cause material in the alert message when identified
+        if cause and cause["material"] != "Not identified":
+            message = "Blockage {}, cause: {}".format(
+                result["location"], cause["material"])
+        else:
+            message = "; ".join(result["reasons"]) if result["reasons"] \
+                      else result["status"]
         db.execute(
             "INSERT INTO alerts (ts, status, location, message) "
             "VALUES (?, ?, ?, ?)",
@@ -390,11 +450,16 @@ def api_data():
     db.commit()
 
     # --- Reply to the ESP32 ---------------------------------------------
-    return jsonify({
-        "status": result["status"],
+    reply = {
+        "status":   result["status"],
         "location": result["location"],
-        "buzzer": result["status"] in ("BLOCKAGE", "CRITICAL"),
-    })
+        "buzzer":   result["status"] in ("BLOCKAGE", "CRITICAL"),
+    }
+    if cause:
+        reply["blockage_cause"]            = cause["material"]
+        reply["blockage_cause_confidence"] = cause["confidence"]
+        reply["blockage_advice"]           = cause["advice"]
+    return jsonify(reply)
 
 
 @app.route("/api/material", methods=["POST"])
@@ -503,6 +568,10 @@ def api_latest():
             "temp": latest["temp"],
         },
         "material": _latest_material(db),
+        # blockage_cause is non-null only when a blockage is active
+        "blockage_cause": (
+            _blockage_cause(db) if result["status"] != "NORMAL" else None
+        ),
         "analysis": result,
     })
 
