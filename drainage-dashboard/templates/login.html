@@ -131,6 +131,51 @@
       outline: 3px solid var(--primary);
       outline-offset: 3px;
     }
+
+    /* ── Role toggle ─────────────────────────────────────────────── */
+    .role-toggle {
+      display: flex;
+      border: 1.5px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+      margin-bottom: 22px;
+      background: var(--bg);
+    }
+    /* hide the actual radio inputs but keep them reachable by keyboard */
+    .role-toggle input[type="radio"] {
+      position: absolute;
+      opacity: 0;
+      width: 0;
+      height: 0;
+      margin: 0;
+    }
+    .role-toggle label {
+      flex: 1;
+      text-align: center;
+      padding: 9px 0;
+      font-size: 0.88rem;
+      font-weight: 600;
+      color: var(--muted);
+      cursor: pointer;
+      border-radius: 0;
+      margin-bottom: 0;
+      transition: background .15s, color .15s;
+      user-select: none;
+    }
+    /* selected state */
+    .role-toggle input[type="radio"]:checked + label {
+      background: var(--primary);
+      color: #ffffff;
+    }
+    /* keyboard focus-visible ring on the label when the radio is focused */
+    .role-toggle input[type="radio"]:focus-visible + label {
+      outline: 3px solid var(--primary);
+      outline-offset: -3px;
+    }
+    /* divider between the two options */
+    .role-toggle label:first-of-type {
+      border-right: 1.5px solid var(--border);
+    }
   </style>
 </head>
 <body>
@@ -146,7 +191,7 @@
     </div>
 
     <h2>Sign in</h2>
-    <p class="subtitle">Enter your credentials to access the dashboard.</p>
+    <p class="subtitle">Choose your role and enter your credentials.</p>
 
     {% if error %}
       <div class="error-msg">{{ error }}</div>
@@ -154,6 +199,15 @@
 
     <form method="post" novalidate>
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+      <div class="role-toggle">
+        <input type="radio" name="role" id="role-operator" value="operator"
+               {% if selected_role != 'admin' %}checked{% endif %}>
+        <label for="role-operator">Operator</label>
+        <input type="radio" name="role" id="role-admin" value="admin"
+               {% if selected_role == 'admin' %}checked{% endif %}>
+        <label for="role-admin">Admin</label>
+      </div>
 
       <label for="login_id">Login ID</label>
       <input type="text" id="login_id" name="login_id"

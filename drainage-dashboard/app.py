@@ -781,6 +781,10 @@ def index():
     """Serve the dashboard page."""
     user   = _current_user()
     region = _region_for_session(user)
+    # An admin who hasn't picked a region yet has nothing to show on the
+    # dashboard; send them to the admin panel to choose one.
+    if user.role == "admin" and region is None:
+        return redirect(url_for("admin"))
     return render_template(
         "index.html",
         user=user,
@@ -797,28 +801,42 @@ def login():
     if _current_user():
         return redirect(url_for("index"))
 
-    error = None
+    error         = None
+    selected_role = "operator"   # keeps the toggle on the right tab after failure
+
     if request.method == "POST":
         if not _csrf_ok():
             error = "Invalid request. Please try again."
         else:
             login_id = request.form.get("login_id", "").strip()
             password = request.form.get("password", "")
-            ip_key   = "ip:{}".format(request.remote_addr)
-            id_key   = "id:{}".format(login_id)
+            role     = request.form.get("role", "operator")
+            # Sanitise: only the two known values are accepted
+            if role not in ("operator", "admin"):
+                role = "operator"
+            selected_role = role
+
+            ip_key = "ip:{}".format(request.remote_addr)
+            id_key = "id:{}".format(login_id)
 
             if _is_blocked(ip_key) or _is_blocked(id_key):
                 error = "Too many failed attempts. Try again in 5 minutes."
             else:
                 user = User.query.filter_by(login_id=login_id).first()
-                if user and user.check_password(password):
+                # Accept only when: user exists, password is correct,
+                # AND the user's actual role matches what was selected.
+                # Every other combination shows the same neutral message so
+                # callers cannot enumerate roles.
+                if user and user.check_password(password) and user.role == role:
                     _clear_failures(ip_key)
                     _clear_failures(id_key)
                     session.permanent = True
                     session["user_id"] = user.id
                     user.last_login_at = datetime.now(timezone.utc)
                     db.session.commit()
-                    # Honour "next" only if it is a relative path
+                    if user.role == "admin":
+                        return redirect(url_for("admin"))
+                    # Operator: honour a safe relative "next" parameter
                     next_url = request.args.get("next", "")
                     if next_url.startswith("/") and not next_url.startswith("//"):
                         return redirect(next_url)
@@ -829,7 +847,8 @@ def login():
                     error = "User not found or incorrect password"
 
     csrf = _csrf_token()
-    return render_template("login.html", error=error, csrf_token=csrf)
+    return render_template("login.html", error=error, csrf_token=csrf,
+                           selected_role=selected_role)
 
 
 @app.route("/logout")
