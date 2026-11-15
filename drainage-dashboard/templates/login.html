@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sign in – Smart Drainage</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Sora:wght@700&family=Public+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #f4f8fc;
+      --card: #ffffff;
+      --text: #0f2342;
+      --muted: #5a6f8c;
+      --border: #dbe6f3;
+      --primary: #2563eb;
+      --primary-dark: #1d4ed8;
+      --error: #e11d48;
+      --shadow: 0 10px 30px rgba(30,64,120,.10);
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0b1220;
+        --card: #131c2e;
+        --text: #e6edf7;
+        --muted: #93a4bd;
+        --border: #25324a;
+        --shadow: 0 10px 30px rgba(0,0,0,.35);
+      }
+    }
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'Public Sans', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+    .card {
+      background: var(--card);
+      border: 1.5px solid var(--border);
+      border-radius: 20px;
+      box-shadow: var(--shadow);
+      padding: 40px 36px;
+      width: 100%;
+      max-width: 400px;
+    }
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 28px;
+    }
+    .logo-icon {
+      width: 40px;
+      height: 40px;
+      background: #eff6ff;
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border: 1.5px solid #bfdbfe;
+    }
+    h1 {
+      font-family: 'Sora', system-ui, sans-serif;
+      font-size: 1.3rem;
+      color: var(--text);
+      line-height: 1.2;
+    }
+    h2 {
+      font-family: 'Sora', system-ui, sans-serif;
+      font-size: 1.5rem;
+      color: var(--text);
+      margin-bottom: 6px;
+    }
+    .subtitle {
+      font-size: 0.88rem;
+      color: var(--muted);
+      margin-bottom: 28px;
+    }
+    label {
+      display: block;
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: var(--muted);
+      margin-bottom: 5px;
+    }
+    input[type="text"],
+    input[type="password"] {
+      width: 100%;
+      padding: 10px 14px;
+      border: 1.5px solid var(--border);
+      border-radius: 10px;
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Public Sans', system-ui, sans-serif;
+      font-size: 0.95rem;
+      outline: none;
+      transition: border-color .2s;
+      margin-bottom: 18px;
+    }
+    input:focus { border-color: var(--primary); }
+    .error-msg {
+      background: rgba(225,29,72,.08);
+      border: 1px solid rgba(225,29,72,.25);
+      border-radius: 8px;
+      color: var(--error);
+      font-size: 0.85rem;
+      padding: 10px 14px;
+      margin-bottom: 18px;
+    }
+    button[type="submit"] {
+      width: 100%;
+      padding: 11px;
+      background: var(--primary);
+      color: #fff;
+      font-family: 'Public Sans', system-ui, sans-serif;
+      font-size: 0.95rem;
+      font-weight: 600;
+      border: none;
+      border-radius: 10px;
+      cursor: pointer;
+      transition: background .2s;
+    }
+    button[type="submit"]:hover { background: var(--primary-dark); }
+    button[type="submit"]:focus-visible {
+      outline: 3px solid var(--primary);
+      outline-offset: 3px;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="logo">
+      <div class="logo-icon">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+          <path d="M12 2C12 2 5 10 5 15a7 7 0 0 0 14 0C19 10 12 2 12 2z" fill="#2563eb" opacity=".9"/>
+          <path d="M12 7c0 0-4 5.5-4 8a4 4 0 0 0 8 0c0-2.5-4-8-4-8z" fill="rgba(255,255,255,.35)"/>
+        </svg>
+      </div>
+      <h1>Smart Drainage</h1>
+    </div>
+
+    <h2>Sign in</h2>
+    <p class="subtitle">Enter your credentials to access the dashboard.</p>
+
+    {% if error %}
+      <div class="error-msg">{{ error }}</div>
+    {% endif %}
+
+    <form method="post" novalidate>
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+      <label for="login_id">Login ID</label>
+      <input type="text" id="login_id" name="login_id"
+             autocomplete="username" autocapitalize="none"
+             autofocus required>
+
+      <label for="password">Password</label>
+      <input type="password" id="password" name="password"
+             autocomplete="current-password" required>
+
+      <button type="submit">Sign in</button>
+    </form>
+  </div>
+</body>
+</html>

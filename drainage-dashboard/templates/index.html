@@ -725,11 +725,24 @@
           </div>
           <div class="site-title">
             <h1>Smart Drainage Monitoring System</h1>
-            <div class="site-subtitle">Blockage detection and material identification</div>
+            <div class="site-subtitle">
+              {% if region %}{{ region.name }} &nbsp;·&nbsp;{% endif %}
+              Blockage detection and material identification
+            </div>
           </div>
         </div>
-        <!-- connection-status id preserved exactly -->
-        <span id="connection-status">Connecting...</span>
+        <div style="display:flex;align-items:center;gap:14px;flex-shrink:0;">
+          <!-- connection-status id preserved exactly -->
+          <span id="connection-status">Connecting...</span>
+          <a href="{{ url_for('change_password') }}"
+             style="font-size:.8rem;color:var(--text-muted);text-decoration:none;white-space:nowrap;">
+            Change password
+          </a>
+          <a href="{{ url_for('logout') }}"
+             style="font-size:.8rem;color:var(--text-muted);text-decoration:none;white-space:nowrap;">
+            Logout
+          </a>
+        </div>
       </header>
 
       <!-- Status banner — id and all inner ids preserved -->
@@ -1440,6 +1453,13 @@
         fetch("/api/alerts?n=10")
       ])
         .then(function(responses) {
+          // Redirect to login if any response is 401 (session expired)
+          for (var i = 0; i < responses.length; i++) {
+            if (responses[i].status === 401) {
+              window.location.href = "/login";
+              return Promise.reject("unauthorized");
+            }
+          }
           return Promise.all(responses.map(function(r) { return r.json(); }));
         })
         .then(function(data) {

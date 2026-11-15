@@ -1,101 +1,206 @@
 """
-Smart Drainage Monitoring System - Flask Backend
+Smart Drainage Monitoring System – Flask Backend (Phase 1)
 
-Receives water-level, flow and temperature readings from an ESP32 (or the
-simulator), stores them in SQLite, analyses them for developing blockages,
-and serves a live dashboard at http://localhost:5000.
+What changed in Phase 1
+------------------------
+* SQLite + raw sqlite3  →  Flask-SQLAlchemy (supports PostgreSQL on Render)
+* DATABASE_URL read from environment; "postgres://" → "postgresql://"
+* Region / User models added; every data row carries a region_id
+* /api/data and /api/material identify the region via X-API-Key → Region.device_key
+* Login (/login), change-password (/change-password), admin (/admin) added
+* "/", /api/latest, /api/history, /api/alerts require a logged-in session
+* Rate-limiting (5 bad attempts → 5-minute block) for login
+* ProxyFix so HTTPS detection works behind Render's load-balancer
+* SECRET_KEY / ADMIN_* / DATABASE_URL validated at startup on Render
 
-Run:  python app.py
-Then: open http://localhost:5000 in a browser
-      run python simulate.py in another terminal to feed test data
+The blockage/analysis/material detection logic is UNCHANGED from the original.
 """
 
-import sqlite3
+import hmac
+import os
+import secrets
+import sys
 import time
-from flask import Flask, request, jsonify, render_template, g
+from collections import defaultdict
+from datetime import datetime, timezone
+from functools import wraps
+
+from flask import (
+    Flask,
+    jsonify,
+    redirect,
+    render_template,
+    request,
+    session,
+    url_for,
+)
+from flask_sqlalchemy import SQLAlchemy
+from werkzeug.middleware.proxy_fix import ProxyFix
+from werkzeug.security import check_password_hash, generate_password_hash
+
+# ─────────────────────────────────────────────────────────────────────────────
+# App setup
+# ─────────────────────────────────────────────────────────────────────────────
 
 app = Flask(__name__)
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 
-# ---------------------------------------------------------------------------
-# CONFIG - edit these values to match your channel and sensors
-# ---------------------------------------------------------------------------
+# ── Secrets and database URL ────────────────────────────────────────────────
+ON_RENDER = bool(os.environ.get("RENDER"))
+
+_raw_db_url = os.environ.get("DATABASE_URL", "")
+# Heroku/Render sometimes give "postgres://" which SQLAlchemy 1.4+ rejects
+if _raw_db_url.startswith("postgres://"):
+    _raw_db_url = "postgresql://" + _raw_db_url[len("postgres://"):]
+# Force the psycopg2 driver so it works with every SQLAlchemy version
+if _raw_db_url.startswith("postgresql://"):
+    _raw_db_url = "postgresql+psycopg2://" + _raw_db_url[len("postgresql://"):]
+DATABASE_URL = _raw_db_url or "sqlite:///local.db"
+
+SECRET_KEY = os.environ.get("SECRET_KEY", "")
+
+if ON_RENDER:
+    missing = []
+    if not SECRET_KEY:
+        missing.append("SECRET_KEY")
+    if not _raw_db_url:
+        missing.append("DATABASE_URL")
+    if missing:
+        sys.exit(
+            "ERROR: Running on Render but required environment "
+            "variable(s) are not set: {}".format(", ".join(missing))
+        )
+else:
+    if not SECRET_KEY:
+        SECRET_KEY = "dev-only-secret-key-do-not-use-in-production"
+        print(
+            "WARNING: SECRET_KEY is not set. "
+            "Using an insecure development key. "
+            "Set SECRET_KEY in your environment before deploying."
+        )
+
+app.config["SECRET_KEY"] = SECRET_KEY
+app.config["SQLALCHEMY_DATABASE_URI"] = DATABASE_URL
+app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
+    "pool_pre_ping": True,
+    "pool_recycle": 300,
+}
+app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+
+# Session cookie settings
+app.config["SESSION_COOKIE_HTTPONLY"] = True
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+app.config["SESSION_COOKIE_SECURE"] = ON_RENDER   # Secure only on HTTPS
+app.config["PERMANENT_SESSION_LIFETIME"] = 8 * 3600  # 8 hours
+
+db = SQLAlchemy(app)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Detection config (unchanged)
+# ─────────────────────────────────────────────────────────────────────────────
+
 CFG = {
-    "CHANNEL_CM":       15,    # total depth of the channel in cm
-    "OVERFLOW_CM":      12,    # depth (cm) at which overflow is imminent
-    "GRADIENT_CM":       2.0,  # depth difference (cm) between two points suggesting a blockage
-    "RISE_CM_PER_MIN":   0.5,  # rate of rise (cm/min) considered "rising fast"
-    "NORMAL_FLOW_LPM":   4.0,  # normal flow rate in litres per minute
-    "FLOW_DROP_RATIO":   0.6,  # flow below this fraction of normal counts as "low"
-    "MIN_DEPTH_CM":      1.0,  # below this depth the channel is "dry" (no false alarms)
-    "WINDOW":            15,   # number of recent readings to analyse
-    "MIN_READINGS":      8,     # need at least this many readings before warning/blockage
-    "OFFLINE_AFTER_S":   30,    # sensor considered offline after this many seconds
+    "CHANNEL_CM":       15,
+    "OVERFLOW_CM":      12,
+    "GRADIENT_CM":       2.0,
+    "RISE_CM_PER_MIN":   0.5,
+    "NORMAL_FLOW_LPM":   4.0,
+    "FLOW_DROP_RATIO":   0.6,
+    "MIN_DEPTH_CM":      1.0,
+    "WINDOW":            15,
+    "MIN_READINGS":      8,
+    "OFFLINE_AFTER_S":   30,
 }
 
-# API key that the ESP32 must send in the X-API-Key header
-API_KEY = "change-me"
+# ─────────────────────────────────────────────────────────────────────────────
+# Models
+# ─────────────────────────────────────────────────────────────────────────────
 
-# SQLite database file (created automatically next to app.py)
-DB_PATH = "drainage.db"
+class Region(db.Model):
+    __tablename__ = "regions"
+    id         = db.Column(db.Integer, primary_key=True)
+    name       = db.Column(db.String(120), nullable=False)
+    code       = db.Column(db.String(40),  nullable=False, unique=True)
+    device_key = db.Column(db.String(64),  nullable=False, unique=True)
 
-
-# ---------------------------------------------------------------------------
-# Database helpers
-# ---------------------------------------------------------------------------
-
-def get_db():
-    """Return a database connection for this request, creating one if needed."""
-    if "db" not in g:
-        g.db = sqlite3.connect(DB_PATH)
-        g.db.row_factory = sqlite3.Row   # lets us access columns by name
-    return g.db
-
-
-@app.teardown_appcontext
-def close_db(exc=None):
-    """Close the database at the end of every request."""
-    db = g.pop("db", None)
-    if db is not None:
-        db.close()
+    readings  = db.relationship("Reading",  back_populates="region",
+                                lazy="dynamic", cascade="all, delete-orphan")
+    materials = db.relationship("Material", back_populates="region",
+                                lazy="dynamic", cascade="all, delete-orphan")
+    alerts    = db.relationship("Alert",    back_populates="region",
+                                lazy="dynamic", cascade="all, delete-orphan")
+    users     = db.relationship("User",     back_populates="region",
+                                lazy="dynamic")
 
 
-def init_db():
-    """Create the tables if they do not exist yet."""
-    conn = sqlite3.connect(DB_PATH)
-    conn.executescript("""
-        CREATE TABLE IF NOT EXISTS readings (
-            id        INTEGER PRIMARY KEY AUTOINCREMENT,
-            ts        REAL NOT NULL,
-            depth_a   REAL NOT NULL,
-            depth_b   REAL NOT NULL,
-            depth_c   REAL NOT NULL,
-            flow      REAL NOT NULL,
-            temp      REAL NOT NULL,
-            status    TEXT NOT NULL,
-            location  TEXT NOT NULL DEFAULT ''
-        );
-        CREATE TABLE IF NOT EXISTS alerts (
-            id        INTEGER PRIMARY KEY AUTOINCREMENT,
-            ts        REAL NOT NULL,
-            status    TEXT NOT NULL,
-            location  TEXT NOT NULL DEFAULT '',
-            message   TEXT NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS materials (
-            id          INTEGER PRIMARY KEY AUTOINCREMENT,
-            ts          REAL NOT NULL,
-            material    TEXT NOT NULL,
-            confidence  REAL NOT NULL,
-            ir_detected  INTEGER NOT NULL DEFAULT 0
-        );
-    """)
-    conn.commit()
-    conn.close()
+class User(db.Model):
+    __tablename__ = "users"
+    id                  = db.Column(db.Integer, primary_key=True)
+    login_id            = db.Column(db.String(80), nullable=False, unique=True)
+    password_hash       = db.Column(db.String(256), nullable=False)
+    role                = db.Column(db.String(20),  nullable=False,
+                                    default="operator")  # "admin" or "operator"
+    region_id           = db.Column(db.Integer, db.ForeignKey("regions.id"),
+                                    nullable=True)       # None for admin
+    must_change_password = db.Column(db.Boolean, nullable=False, default=False)
+    created_at          = db.Column(db.DateTime(timezone=True),
+                                    default=lambda: datetime.now(timezone.utc))
+    last_login_at       = db.Column(db.DateTime(timezone=True), nullable=True)
+
+    region = db.relationship("Region", back_populates="users")
+
+    def set_password(self, plaintext):
+        self.password_hash = generate_password_hash(plaintext)
+
+    def check_password(self, plaintext):
+        return check_password_hash(self.password_hash, plaintext)
 
 
-# ---------------------------------------------------------------------------
-# Detection logic
-# ---------------------------------------------------------------------------
+class Reading(db.Model):
+    __tablename__ = "readings"
+    id        = db.Column(db.Integer, primary_key=True)
+    region_id = db.Column(db.Integer, db.ForeignKey("regions.id"),
+                          nullable=False, index=True)
+    ts        = db.Column(db.Float,   nullable=False)
+    depth_a   = db.Column(db.Float,   nullable=False)
+    depth_b   = db.Column(db.Float,   nullable=False)
+    depth_c   = db.Column(db.Float,   nullable=False)
+    flow      = db.Column(db.Float,   nullable=False)
+    temp      = db.Column(db.Float,   nullable=False)
+    status    = db.Column(db.String(20), nullable=False)
+    location  = db.Column(db.String(20), nullable=False, default="")
+
+    region = db.relationship("Region", back_populates="readings")
+
+
+class Material(db.Model):
+    __tablename__ = "materials"
+    id          = db.Column(db.Integer, primary_key=True)
+    region_id   = db.Column(db.Integer, db.ForeignKey("regions.id"),
+                            nullable=False, index=True)
+    ts          = db.Column(db.Float,   nullable=False)
+    material    = db.Column(db.String(20), nullable=False)
+    confidence  = db.Column(db.Float,   nullable=False)
+    ir_detected = db.Column(db.Boolean, nullable=False, default=False)
+
+    region = db.relationship("Region", back_populates="materials")
+
+
+class Alert(db.Model):
+    __tablename__ = "alerts"
+    id        = db.Column(db.Integer, primary_key=True)
+    region_id = db.Column(db.Integer, db.ForeignKey("regions.id"),
+                          nullable=False, index=True)
+    ts        = db.Column(db.Float,   nullable=False)
+    status    = db.Column(db.String(20), nullable=False)
+    location  = db.Column(db.String(20), nullable=False, default="")
+    message   = db.Column(db.Text,    nullable=False)
+
+    region = db.relationship("Region", back_populates="alerts")
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Detection logic (unchanged from original)
+# ─────────────────────────────────────────────────────────────────────────────
 
 def _smooth(rows, key):
     """Average of the last 3 readings for the given column."""
@@ -104,20 +209,12 @@ def _smooth(rows, key):
 
 
 def _slope(rows, key):
-    """
-    Least-squares slope of the given column over the window.
-    Returns the trend in units per minute.
-
-    Timestamps are centred (each value minus the mean) before the regression
-    to avoid floating-point loss when Unix timestamps are large.
-    """
-    # Convert Unix timestamps (seconds) to minutes so slope is "per minute"
+    """Least-squares slope (units/minute), timestamps centred to avoid FP loss."""
     xs = [r["ts"] / 60.0 for r in rows]
     ys = [r[key] for r in rows]
     n = len(xs)
     mean_x = sum(xs) / n
     mean_y = sum(ys) / n
-    # Centered formula: slope = sum(dx*dy) / sum(dx^2)
     dx = [x - mean_x for x in xs]
     dy = [y - mean_y for y in ys]
     num = sum(a * b for a, b in zip(dx, dy))
@@ -131,56 +228,38 @@ def analyse(rows):
     """
     Analyse the most recent readings and decide the channel status.
 
-    Parameters:
-        rows: list of dict-like rows (oldest first), each containing
-              ts, depth_a, depth_b, depth_c, flow.
+    Parameters
+    ----------
+    rows : list of dicts (oldest first) with keys ts, depth_a, depth_b,
+           depth_c, flow.
 
-    Returns a dict:
-        status    NORMAL | WARNING | BLOCKAGE | CRITICAL
-        location  "" | "A-B" | "B-C" | "after C"
-        score     int (0-4) for the winning segment
-        reasons   list of plain-English strings
-        eta_min   minutes until overflow (float) or None
-        slopes    dict of slopes for depth_a, depth_b, depth_c, flow
+    Returns a dict: status, location, score, confirmed, reasons, eta_min,
+    slopes.
     """
-    # --- Not enough data yet -> everything is fine -----------------------
     if len(rows) < CFG["MIN_READINGS"]:
         return {
-            "status": "NORMAL",
-            "location": "",
-            "score": 0,
-            "confirmed": False,
-            "reasons": [],
-            "eta_min": None,
-            "slopes": {},
+            "status": "NORMAL", "location": "", "score": 0,
+            "confirmed": False, "reasons": [], "eta_min": None, "slopes": {},
         }
 
-    # --- 1. Smooth latest values (average of last 3 readings) ------------
     s_a    = _smooth(rows, "depth_a")
     s_b    = _smooth(rows, "depth_b")
     s_c    = _smooth(rows, "depth_c")
     s_flow = _smooth(rows, "flow")
 
-    # --- 2. Trend (slope) of each value in units per minute --------------
     slope_a    = _slope(rows, "depth_a")
     slope_b    = _slope(rows, "depth_b")
     slope_c    = _slope(rows, "depth_c")
     slope_flow = _slope(rows, "flow")
     slopes = {
-        "depth_a": round(slope_a, 3),
-        "depth_b": round(slope_b, 3),
-        "depth_c": round(slope_c, 3),
-        "flow":    round(slope_flow, 3),
+        "depth_a": round(slope_a, 3), "depth_b": round(slope_b, 3),
+        "depth_c": round(slope_c, 3), "flow":    round(slope_flow, 3),
     }
 
-    # --- 3. Is the flow abnormally low? ----------------------------------
     flow_low = (s_flow < CFG["NORMAL_FLOW_LPM"] * CFG["FLOW_DROP_RATIO"]
                 and s_a > CFG["MIN_DEPTH_CM"])
     flow_reason = "Flow low ({:.1f} L/min)".format(s_flow)
 
-    # --- 4. Score each possible blockage location ------------------------
-    # Each segment keeps its own score, reasons list, and a "diff" value
-    # used as a tie-breaker when two segments have the same score.
     seg_ab = {"score": 0, "reasons": [], "diff": s_a - s_b,
               "has_gradient": False, "has_flow_low": False}
     seg_bc = {"score": 0, "reasons": [], "diff": s_b - s_c,
@@ -188,53 +267,39 @@ def analyse(rows):
     seg_ac = {"score": 0, "reasons": [], "diff": 0,
               "has_gradient": False, "has_flow_low": False}
 
-    # Segment A-B: water deeper at A than B (back-up upstream of blockage)
     if (s_a - s_b) >= CFG["GRADIENT_CM"]:
-        seg_ab["score"] += 2
-        seg_ab["has_gradient"] = True
+        seg_ab["score"] += 2; seg_ab["has_gradient"] = True
         seg_ab["reasons"].append(
             "Water is {:.1f} cm deeper at A than at B".format(s_a - s_b))
     if slope_a >= CFG["RISE_CM_PER_MIN"]:
         seg_ab["score"] += 1
-        seg_ab["reasons"].append(
-            "Level at A rising {:.1f} cm/min".format(slope_a))
+        seg_ab["reasons"].append("Level at A rising {:.1f} cm/min".format(slope_a))
     if flow_low:
-        seg_ab["score"] += 1
-        seg_ab["has_flow_low"] = True
+        seg_ab["score"] += 1; seg_ab["has_flow_low"] = True
         seg_ab["reasons"].append(flow_reason)
 
-    # Segment B-C: water deeper at B than C
     if (s_b - s_c) >= CFG["GRADIENT_CM"]:
-        seg_bc["score"] += 2
-        seg_bc["has_gradient"] = True
+        seg_bc["score"] += 2; seg_bc["has_gradient"] = True
         seg_bc["reasons"].append(
             "Water is {:.1f} cm deeper at B than at C".format(s_b - s_c))
     if slope_b >= CFG["RISE_CM_PER_MIN"]:
         seg_bc["score"] += 1
-        seg_bc["reasons"].append(
-            "Level at B rising {:.1f} cm/min".format(slope_b))
+        seg_bc["reasons"].append("Level at B rising {:.1f} cm/min".format(slope_b))
     if flow_low:
-        seg_bc["score"] += 1
-        seg_bc["has_flow_low"] = True
+        seg_bc["score"] += 1; seg_bc["has_flow_low"] = True
         seg_bc["reasons"].append(flow_reason)
 
-    # After C: all three depths rising quickly
     if (slope_a >= CFG["RISE_CM_PER_MIN"]
             and slope_b >= CFG["RISE_CM_PER_MIN"]
             and slope_c >= CFG["RISE_CM_PER_MIN"]):
-        seg_ac["score"] += 2
-        seg_ac["has_gradient"] = True
+        seg_ac["score"] += 2; seg_ac["has_gradient"] = True
         seg_ac["reasons"].append("All depths rising rapidly")
     if flow_low:
-        seg_ac["score"] += 1
-        seg_ac["has_flow_low"] = True
+        seg_ac["score"] += 1; seg_ac["has_flow_low"] = True
         seg_ac["reasons"].append(flow_reason)
 
-    # --- 5. Pick the highest-scoring segment -----------------------------
-    # Tie-breaker: larger depth difference (upstream minus downstream).
     segments = [("A-B", seg_ab), ("B-C", seg_bc), ("after C", seg_ac)]
-    best_loc, best = max(
-        segments, key=lambda kv: (kv[1]["score"], kv[1]["diff"]))
+    best_loc, best = max(segments, key=lambda kv: (kv[1]["score"], kv[1]["diff"]))
 
     if best["score"] >= 3:
         status = "BLOCKAGE"
@@ -244,18 +309,16 @@ def analyse(rows):
         status = "NORMAL"
 
     location = best_loc if status in ("BLOCKAGE", "WARNING") else ""
-    reasons = best["reasons"] if status in ("BLOCKAGE", "WARNING") else []
+    reasons  = best["reasons"] if status in ("BLOCKAGE", "WARNING") else []
 
-    # --- 6. CRITICAL override: any depth at or above overflow ------------
     max_depth = max(s_a, s_b, s_c)
     if max_depth >= CFG["OVERFLOW_CM"]:
         status = "CRITICAL"
-        reasons = list(reasons)  # keep any existing reasons
+        reasons = list(reasons)
         reasons.append(
             "Water depth {:.1f} cm is at or above the overflow level "
             "({:.0f} cm)".format(max_depth, CFG["OVERFLOW_CM"]))
 
-    # --- 7. Estimate time to overflow -----------------------------------
     eta_min = None
     for depth, slope in [(s_a, slope_a), (s_b, slope_b), (s_c, slope_c)]:
         if slope > 0.1 and depth < CFG["OVERFLOW_CM"]:
@@ -265,37 +328,23 @@ def analyse(rows):
     if eta_min is not None:
         eta_min = round(eta_min, 1)
 
-    # A blockage is "confirmed" when both the depth gradient and low flow
-    # agree on the same segment (not just a rising trend alone).
     confirmed = (status in ("BLOCKAGE", "CRITICAL")
                  and best["has_gradient"] and best["has_flow_low"])
 
     return {
-        "status": status,
-        "location": location,
-        "score": best["score"],
-        "confirmed": confirmed,
-        "reasons": reasons,
-        "eta_min": eta_min,
-        "slopes": slopes,
+        "status": status, "location": location, "score": best["score"],
+        "confirmed": confirmed, "reasons": reasons,
+        "eta_min": eta_min, "slopes": slopes,
     }
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Material helpers (unchanged logic, now query via SQLAlchemy)
+# ─────────────────────────────────────────────────────────────────────────────
 
-# ---------------------------------------------------------------------------
-# Material helpers
-# ---------------------------------------------------------------------------
-
-# Allowed material categories (GRAVEL and SAND added for finer classification)
 MATERIALS = ("ROCK", "GRAVEL", "SAND", "PLASTIC", "RUBBER", "WOOD", "OTHER", "UNKNOWN")
-
-# Confidence threshold below which we treat the reading as UNKNOWN
 CONFIDENCE_THRESHOLD = 0.6
-
-# How recently a material reading must have been received to count as the
-# blockage cause (seconds).  120 s = 2 minutes.
 CAUSE_WINDOW_S = 120
 
-# Short advice texts shown on the dashboard and returned to the ESP32.
 BLOCKAGE_ADVICE = {
     "PLASTIC":  "Remove manually, do not flush",
     "RUBBER":   "Remove manually",
@@ -308,70 +357,166 @@ BLOCKAGE_ADVICE = {
 }
 
 
-def _latest_material(db):
-    """Return the most recent material detection as a dict, or None."""
-    mat = db.execute(
-        "SELECT ts, material, confidence, ir_detected FROM materials "
-        "ORDER BY id DESC LIMIT 1"
-    ).fetchone()
+def _latest_material(region_id):
+    """Return the most recent material detection dict for a region, or None."""
+    mat = (Material.query
+           .filter_by(region_id=region_id)
+           .order_by(Material.id.desc())
+           .first())
     if not mat:
         return None
     return {
-        "ts": mat["ts"],
-        "material": mat["material"],
-        "confidence": mat["confidence"],
-        "ir_detected": bool(mat["ir_detected"]),
+        "ts": mat.ts,
+        "material": mat.material,
+        "confidence": mat.confidence,
+        "ir_detected": mat.ir_detected,
     }
 
 
-def _blockage_cause(db):
-    """
-    Return the best material reading to use as the blockage cause, or a
-    'not identified' placeholder.
-
-    Rules:
-    - Must have been received within the last CAUSE_WINDOW_S seconds.
-    - Must have confidence >= CONFIDENCE_THRESHOLD.
-    - Must not be UNKNOWN.
-    - If several readings qualify, pick the most recent one.
-
-    Always returns a dict with keys: material, confidence, advice.
-    """
+def _blockage_cause(region_id):
+    """Return the best recent material reading as the blockage cause dict."""
     cutoff = time.time() - CAUSE_WINDOW_S
-    row = db.execute(
-        "SELECT material, confidence FROM materials "
-        "WHERE ts >= ? AND confidence >= ? AND material != 'UNKNOWN' "
-        "ORDER BY id DESC LIMIT 1",
-        (cutoff, CONFIDENCE_THRESHOLD)
-    ).fetchone()
-
+    row = (Material.query
+           .filter(
+               Material.region_id == region_id,
+               Material.ts >= cutoff,
+               Material.confidence >= CONFIDENCE_THRESHOLD,
+               Material.material != "UNKNOWN",
+           )
+           .order_by(Material.id.desc())
+           .first())
     if row:
-        mat = row["material"]
         return {
-            "material":   mat,
-            "confidence": round(row["confidence"], 2),
-            "advice":     BLOCKAGE_ADVICE.get(mat, BLOCKAGE_ADVICE["OTHER"]),
+            "material":   row.material,
+            "confidence": round(row.confidence, 2),
+            "advice":     BLOCKAGE_ADVICE.get(row.material, BLOCKAGE_ADVICE["OTHER"]),
         }
-    # Nothing useful in the recent window
     return {
         "material":   "Not identified",
         "confidence": None,
         "advice":     BLOCKAGE_ADVICE["OTHER"],
     }
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Rate-limiting helpers (in-memory, fine for one or two workers)
+# ─────────────────────────────────────────────────────────────────────────────
 
-# ---------------------------------------------------------------------------
-# API endpoints
-# ---------------------------------------------------------------------------
+# {key: [timestamp, ...]}  key is "ip:<ip>" or "id:<login_id>"
+_bad_attempts = defaultdict(list)
+_BLOCK_WINDOW = 300          # 5 minutes
+_MAX_ATTEMPTS = 5
+
+
+def _is_blocked(key):
+    now = time.time()
+    attempts = [t for t in _bad_attempts[key] if now - t < _BLOCK_WINDOW]
+    _bad_attempts[key] = attempts
+    return len(attempts) >= _MAX_ATTEMPTS
+
+
+def _record_failure(key):
+    _bad_attempts[key].append(time.time())
+
+
+def _clear_failures(key):
+    _bad_attempts.pop(key, None)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CSRF helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _csrf_token():
+    """Return a per-session CSRF token, generating one if needed."""
+    if "csrf_token" not in session:
+        session["csrf_token"] = secrets.token_hex(32)
+    return session["csrf_token"]
+
+
+def _csrf_ok():
+    """Check that the submitted form CSRF token matches the session token."""
+    token = session.get("csrf_token", "")
+    submitted = request.form.get("csrf_token", "")
+    if not token or not submitted:
+        return False
+    return hmac.compare_digest(token, submitted)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Auth helpers / decorators
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _current_user():
+    """Return the User object for the logged-in session, or None."""
+    uid = session.get("user_id")
+    if uid is None:
+        return None
+    return db.session.get(User, uid)
+
+
+def _region_for_session(user):
+    """
+    Return the Region the user should see.
+    - Operator: their fixed region.
+    - Admin: the region they chose at /admin (stored in session), or None.
+    """
+    if user.role == "operator":
+        return user.region
+    # Admin
+    rid = session.get("admin_region_id")
+    if rid:
+        return db.session.get(Region, rid)
+    return None
+
+
+def login_required(f):
+    """Redirect page requests to /login; return 401 JSON for API requests."""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        user = _current_user()
+        if user is None:
+            if request.path.startswith("/api/"):
+                return jsonify({"error": "unauthorized"}), 401
+            return redirect(url_for("login", next=request.path))
+        # Force password change before anything else
+        if user.must_change_password and request.endpoint != "change_password":
+            if request.path.startswith("/api/"):
+                return jsonify({"error": "password change required"}), 403
+            return redirect(url_for("change_password"))
+        return f(*args, **kwargs)
+    return decorated
+
+
+def admin_required(f):
+    """Requires admin role on top of login_required."""
+    @wraps(f)
+    @login_required
+    def decorated(*args, **kwargs):
+        user = _current_user()
+        if user.role != "admin":
+            if request.path.startswith("/api/"):
+                return jsonify({"error": "forbidden"}), 403
+            return redirect(url_for("index"))
+        return f(*args, **kwargs)
+    return decorated
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Device API — no login, region identified by X-API-Key
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _region_from_key():
+    """Return the Region matching the X-API-Key header, or None."""
+    key = request.headers.get("X-API-Key", "")
+    if not key:
+        return None
+    return Region.query.filter_by(device_key=key).first()
+
 
 @app.route("/api/data", methods=["POST"])
 def api_data():
-    """Receive a reading from the ESP32 (or the simulator)."""
-    # --- API key check --------------------------------------------------
-    if request.headers.get("X-API-Key") != API_KEY:
+    """Receive a sensor reading from the ESP32 / simulator."""
+    region = _region_from_key()
+    if region is None:
         return jsonify({"error": "unauthorized"}), 401
 
-    # --- Parse and validate JSON ----------------------------------------
     data = request.get_json(silent=True)
     if not data:
         return jsonify({"error": "invalid or empty JSON body"}), 400
@@ -389,67 +534,65 @@ def api_data():
         except (TypeError, ValueError):
             return jsonify({"error": "{} is not a number".format(f)}), 400
 
-    # --- Analyse recent readings + this new one -------------------------
-    db = get_db()
     now = time.time()
 
-    # Fetch last WINDOW-1 readings (we add the new one to make WINDOW total)
-    rows = db.execute(
-        "SELECT ts, depth_a, depth_b, depth_c, flow "
-        "FROM readings ORDER BY id DESC LIMIT ?",
-        (CFG["WINDOW"] - 1,)
-    ).fetchall()
-    rows = [dict(r) for r in reversed(rows)]  # oldest first
-
-    # Append the incoming reading to the end
+    # Fetch the last WINDOW-1 readings for this region, oldest first
+    prev_rows = (Reading.query
+                 .filter_by(region_id=region.id)
+                 .order_by(Reading.id.desc())
+                 .limit(CFG["WINDOW"] - 1)
+                 .all())
+    rows = [
+        {"ts": r.ts, "depth_a": r.depth_a, "depth_b": r.depth_b,
+         "depth_c": r.depth_c, "flow": r.flow}
+        for r in reversed(prev_rows)
+    ]
     rows.append({
         "ts": now,
-        "depth_a": reading["depth_a"],
-        "depth_b": reading["depth_b"],
-        "depth_c": reading["depth_c"],
-        "flow": reading["flow"],
+        "depth_a": reading["depth_a"], "depth_b": reading["depth_b"],
+        "depth_c": reading["depth_c"], "flow": reading["flow"],
     })
 
     result = analyse(rows)
 
-    # --- Fetch previous reading's status for alert comparison -----------
-    prev = db.execute(
-        "SELECT status, location FROM readings ORDER BY id DESC LIMIT 1"
-    ).fetchone()
+    # Previous status for change detection
+    prev = (Reading.query
+            .filter_by(region_id=region.id)
+            .order_by(Reading.id.desc())
+            .first())
 
-    # --- Store the reading ----------------------------------------------
-    db.execute(
-        "INSERT INTO readings "
-        "(ts, depth_a, depth_b, depth_c, flow, temp, status, location) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        (now, reading["depth_a"], reading["depth_b"], reading["depth_c"],
-         reading["flow"], reading["temp"], result["status"], result["location"])
+    # Persist the new reading
+    new_reading = Reading(
+        region_id=region.id, ts=now,
+        depth_a=reading["depth_a"], depth_b=reading["depth_b"],
+        depth_c=reading["depth_c"], flow=reading["flow"], temp=reading["temp"],
+        status=result["status"], location=result["location"],
     )
+    db.session.add(new_reading)
 
-    # --- Log an alert only when (status, location) changes ---------------
-    # Build the blockage cause now so we can embed it in the alert message.
-    cause = _blockage_cause(db) if result["status"] != "NORMAL" else None
+    # Alert on status/location change
+    cause = _blockage_cause(region.id) if result["status"] != "NORMAL" else None
 
-    changed = (prev is None
-               or prev["status"] != result["status"]
-               or prev["location"] != result["location"])
+    changed = (
+        prev is None
+        or prev.status   != result["status"]
+        or prev.location != result["location"]
+    )
     if changed and result["status"] != "NORMAL":
-        # Include cause material in the alert message when identified
         if cause and cause["material"] != "Not identified":
-            message = "Blockage {}, cause: {}".format(
+            msg = "Blockage {}, cause: {}".format(
                 result["location"], cause["material"])
         else:
-            message = "; ".join(result["reasons"]) if result["reasons"] \
-                      else result["status"]
-        db.execute(
-            "INSERT INTO alerts (ts, status, location, message) "
-            "VALUES (?, ?, ?, ?)",
-            (now, result["status"], result["location"], message)
-        )
+            msg = "; ".join(result["reasons"]) if result["reasons"] \
+                  else result["status"]
+        db.session.add(Alert(
+            region_id=region.id, ts=now,
+            status=result["status"], location=result["location"],
+            message=msg,
+        ))
 
-    db.commit()
+    db.session.commit()
 
-    # --- Reply to the ESP32 ---------------------------------------------
     reply = {
         "status":   result["status"],
         "location": result["location"],
@@ -464,12 +607,11 @@ def api_data():
 
 @app.route("/api/material", methods=["POST"])
 def api_material():
-    """Receive a material identification from the ESP32 object sensor."""
-    # --- API key check (same as /api/data) -------------------------------
-    if request.headers.get("X-API-Key") != API_KEY:
+    """Receive a material detection from the ESP32 / simulator."""
+    region = _region_from_key()
+    if region is None:
         return jsonify({"error": "unauthorized"}), 401
 
-    # --- Parse and validate JSON ----------------------------------------
     data = request.get_json(silent=True)
     if not data:
         return jsonify({"error": "invalid or empty JSON body"}), 400
@@ -492,134 +634,341 @@ def api_material():
     if not isinstance(ir_detected, bool):
         return jsonify({"error": "ir_detected must be true or false"}), 400
 
-    # If confidence is too low, treat the material as UNKNOWN
     if confidence < CONFIDENCE_THRESHOLD:
         material = "UNKNOWN"
 
     now = time.time()
-    db = get_db()
 
-    # --- Store the material reading -------------------------------------
-    db.execute(
-        "INSERT INTO materials (ts, material, confidence, ir_detected) "
-        "VALUES (?, ?, ?, ?)",
-        (now, material, confidence, 1 if ir_detected else 0)
+    new_mat = Material(
+        region_id=region.id, ts=now,
+        material=material, confidence=confidence, ir_detected=ir_detected,
     )
+    db.session.add(new_mat)
+    db.session.flush()   # get the id so the LIMIT 2 query below sees it
 
-    # --- Log an alert when the material changes -------------------------
-    # Compare with the material entry before the one we just inserted.
-    prev_rows = db.execute(
-        "SELECT material FROM materials ORDER BY id DESC LIMIT 2"
-    ).fetchall()
-    prev_material = prev_rows[1]["material"] if len(prev_rows) > 1 else None
+    # Alert when material changes
+    prev_rows = (Material.query
+                 .filter_by(region_id=region.id)
+                 .order_by(Material.id.desc())
+                 .limit(2).all())
+    prev_material = prev_rows[1].material if len(prev_rows) > 1 else None
 
     if prev_material != material:
         msg = "Detected {} ({:.0%} confidence".format(material, confidence)
         if ir_detected:
             msg += ", IR object detected"
         msg += ")"
-        db.execute(
-            "INSERT INTO alerts (ts, status, location, message) "
-            "VALUES (?, ?, ?, ?)",
-            (now, "MATERIAL", "", msg)
-        )
+        db.session.add(Alert(
+            region_id=region.id, ts=now,
+            status="MATERIAL", location="", message=msg,
+        ))
 
-    db.commit()
+    db.session.commit()
+    return jsonify({"material": material, "confidence": confidence,
+                    "ir_detected": ir_detected})
 
-    return jsonify({
-        "material": material,
-        "confidence": confidence,
-        "ir_detected": ir_detected,
-    })
-
+# ─────────────────────────────────────────────────────────────────────────────
+# Dashboard API (login required, region-scoped)
+# ─────────────────────────────────────────────────────────────────────────────
 
 @app.route("/api/latest")
+@login_required
 def api_latest():
-    """Return the latest reading, the analysis result, and config."""
-    db = get_db()
+    """Return the latest reading, analysis result, config for this region."""
+    user   = _current_user()
+    region = _region_for_session(user)
 
-    rows = db.execute(
-        "SELECT ts, depth_a, depth_b, depth_c, flow, temp "
-        "FROM readings ORDER BY id DESC LIMIT ?",
-        (CFG["WINDOW"],)
-    ).fetchall()
+    if region is None:
+        return jsonify({"has_data": False, "config": CFG, "material": None})
 
-    if not rows:
-        return jsonify({"has_data": False, "config": CFG,
-                        "material": _latest_material(db)})
+    db_rows = (Reading.query
+               .filter_by(region_id=region.id)
+               .order_by(Reading.id.desc())
+               .limit(CFG["WINDOW"])
+               .all())
 
-    rows = [dict(r) for r in reversed(rows)]  # oldest first
-    latest = rows[-1]
+    if not db_rows:
+        return jsonify({
+            "has_data": False,
+            "config": CFG,
+            "region_name": region.name,
+            "material": _latest_material(region.id),
+        })
+
+    rows = [
+        {"ts": r.ts, "depth_a": r.depth_a, "depth_b": r.depth_b,
+         "depth_c": r.depth_c, "flow": r.flow}
+        for r in reversed(db_rows)
+    ]
+    latest = db_rows[0]   # most recent
     result = analyse(rows)
 
-    now = time.time()
-    age_s = round(now - latest["ts"], 1)
+    age_s = round(time.time() - latest.ts, 1)
 
     return jsonify({
         "has_data": True,
         "age_s": age_s,
         "config": CFG,
+        "region_name": region.name,
         "latest": {
-            "ts": latest["ts"],
-            "depth_a": latest["depth_a"],
-            "depth_b": latest["depth_b"],
-            "depth_c": latest["depth_c"],
-            "flow": latest["flow"],
-            "temp": latest["temp"],
+            "ts": latest.ts,
+            "depth_a": latest.depth_a, "depth_b": latest.depth_b,
+            "depth_c": latest.depth_c, "flow": latest.flow,
+            "temp": latest.temp,
         },
-        "material": _latest_material(db),
-        # blockage_cause is non-null only when a blockage is active
+        "material": _latest_material(region.id),
         "blockage_cause": (
-            _blockage_cause(db) if result["status"] != "NORMAL" else None
+            _blockage_cause(region.id) if result["status"] != "NORMAL" else None
         ),
         "analysis": result,
     })
 
 
 @app.route("/api/history")
+@login_required
 def api_history():
-    """Return the last n readings (max 500), oldest first for charts."""
-    n = request.args.get("n", 60, type=int)
-    n = min(max(1, n), 500)
+    """Return the last n readings (max 500), oldest first."""
+    user   = _current_user()
+    region = _region_for_session(user)
+    if region is None:
+        return jsonify({"readings": []})
 
-    db = get_db()
-    rows = db.execute(
-        "SELECT ts, depth_a, depth_b, depth_c, flow, temp, status, location "
-        "FROM readings ORDER BY id DESC LIMIT ?",
-        (n,)
-    ).fetchall()
-    rows = [dict(r) for r in reversed(rows)]  # oldest first
-
+    n = min(max(1, request.args.get("n", 60, type=int)), 500)
+    db_rows = (Reading.query
+               .filter_by(region_id=region.id)
+               .order_by(Reading.id.desc())
+               .limit(n)
+               .all())
+    rows = [
+        {"ts": r.ts, "depth_a": r.depth_a, "depth_b": r.depth_b,
+         "depth_c": r.depth_c, "flow": r.flow, "temp": r.temp,
+         "status": r.status, "location": r.location}
+        for r in reversed(db_rows)
+    ]
     return jsonify({"readings": rows})
 
 
 @app.route("/api/alerts")
+@login_required
 def api_alerts():
     """Return the latest n alerts, newest first."""
-    n = request.args.get("n", 10, type=int)
-    n = min(max(1, n), 500)
+    user   = _current_user()
+    region = _region_for_session(user)
+    if region is None:
+        return jsonify({"alerts": []})
 
-    db = get_db()
-    rows = db.execute(
-        "SELECT ts, status, location, message FROM alerts "
-        "ORDER BY id DESC LIMIT ?",
-        (n,)
-    ).fetchall()
+    n = min(max(1, request.args.get("n", 10, type=int)), 500)
+    db_rows = (Alert.query
+               .filter_by(region_id=region.id)
+               .order_by(Alert.id.desc())
+               .limit(n)
+               .all())
+    return jsonify({
+        "alerts": [
+            {"ts": a.ts, "status": a.status,
+             "location": a.location, "message": a.message}
+            for a in db_rows
+        ]
+    })
 
-    return jsonify({"alerts": [dict(r) for r in rows]})
-
+# ─────────────────────────────────────────────────────────────────────────────
+# Dashboard page
+# ─────────────────────────────────────────────────────────────────────────────
 
 @app.route("/")
+@login_required
 def index():
     """Serve the dashboard page."""
-    return render_template("index.html")
+    user   = _current_user()
+    region = _region_for_session(user)
+    return render_template(
+        "index.html",
+        user=user,
+        region=region,
+    )
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Auth routes
+# ─────────────────────────────────────────────────────────────────────────────
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    # Already logged in
+    if _current_user():
+        return redirect(url_for("index"))
+
+    error = None
+    if request.method == "POST":
+        if not _csrf_ok():
+            error = "Invalid request. Please try again."
+        else:
+            login_id = request.form.get("login_id", "").strip()
+            password = request.form.get("password", "")
+            ip_key   = "ip:{}".format(request.remote_addr)
+            id_key   = "id:{}".format(login_id)
+
+            if _is_blocked(ip_key) or _is_blocked(id_key):
+                error = "Too many failed attempts. Try again in 5 minutes."
+            else:
+                user = User.query.filter_by(login_id=login_id).first()
+                if user and user.check_password(password):
+                    _clear_failures(ip_key)
+                    _clear_failures(id_key)
+                    session.permanent = True
+                    session["user_id"] = user.id
+                    user.last_login_at = datetime.now(timezone.utc)
+                    db.session.commit()
+                    # Honour "next" only if it is a relative path
+                    next_url = request.args.get("next", "")
+                    if next_url.startswith("/") and not next_url.startswith("//"):
+                        return redirect(next_url)
+                    return redirect(url_for("index"))
+                else:
+                    _record_failure(ip_key)
+                    _record_failure(id_key)
+                    error = "User not found or incorrect password"
+
+    csrf = _csrf_token()
+    return render_template("login.html", error=error, csrf_token=csrf)
 
 
-# ---------------------------------------------------------------------------
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("login"))
 
-# Initialise the database when the module loads so it works with both
-# `python app.py` and `gunicorn app:app`
-init_db()
+
+@app.route("/change-password", methods=["GET", "POST"])
+@login_required
+def change_password():
+    user  = _current_user()
+    error = None
+    success = None
+
+    if request.method == "POST":
+        if not _csrf_ok():
+            error = "Invalid request. Please try again."
+        else:
+            current  = request.form.get("current_password", "")
+            new_pw   = request.form.get("new_password", "")
+            confirm  = request.form.get("confirm_password", "")
+
+            if not user.check_password(current):
+                error = "Current password is incorrect."
+            elif len(new_pw) < 8:
+                error = "New password must be at least 8 characters."
+            elif new_pw == current:
+                error = "New password must be different from the current one."
+            elif new_pw != confirm:
+                error = "Passwords do not match."
+            else:
+                user.set_password(new_pw)
+                user.must_change_password = False
+                db.session.commit()
+                return redirect(url_for("index"))
+
+    csrf = _csrf_token()
+    return render_template(
+        "change_password.html", user=user, error=error, success=success,
+        csrf_token=csrf,
+    )
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Admin page
+# ─────────────────────────────────────────────────────────────────────────────
+
+@app.route("/admin", methods=["GET", "POST"])
+@admin_required
+def admin():
+    user  = _current_user()
+    error = None
+    info  = None
+    csrf  = _csrf_token()
+
+    if request.method == "POST":
+        if not _csrf_ok():
+            error = "Invalid request. Please try again."
+        else:
+            action = request.form.get("action", "")
+
+            if action == "select_region":
+                rid = request.form.get("region_id", type=int)
+                region = db.session.get(Region, rid)
+                if region:
+                    session["admin_region_id"] = region.id
+                    return redirect(url_for("index"))
+                error = "Region not found."
+
+            elif action == "create_region":
+                name = request.form.get("name", "").strip()
+                code = request.form.get("code", "").strip()
+                if not name or not code:
+                    error = "Name and code are required."
+                elif Region.query.filter_by(code=code).first():
+                    error = "A region with that code already exists."
+                else:
+                    key = secrets.token_urlsafe(32)
+                    db.session.add(Region(name=name, code=code, device_key=key))
+                    db.session.commit()
+                    info = "Region created. Device key: {}".format(key)
+
+            elif action == "create_operator":
+                login_id  = request.form.get("login_id", "").strip()
+                rid       = request.form.get("region_id", type=int)
+                tmp_pw    = secrets.token_urlsafe(10)
+                region    = db.session.get(Region, rid)
+                if not login_id or not region:
+                    error = "Login ID and region are required."
+                elif User.query.filter_by(login_id=login_id).first():
+                    error = "A user with that login ID already exists."
+                else:
+                    u = User(login_id=login_id, role="operator",
+                             region_id=region.id, must_change_password=True)
+                    u.set_password(tmp_pw)
+                    db.session.add(u)
+                    db.session.commit()
+                    info = "Operator created. Temporary password: {}".format(tmp_pw)
+
+            elif action == "reset_password":
+                uid    = request.form.get("user_id", type=int)
+                target = db.session.get(User, uid)
+                if not target:
+                    error = "User not found."
+                else:
+                    tmp_pw = secrets.token_urlsafe(10)
+                    target.set_password(tmp_pw)
+                    target.must_change_password = True
+                    db.session.commit()
+                    info = "Password reset for {}. Temporary password: {}".format(
+                        target.login_id, tmp_pw)
+
+    regions = Region.query.order_by(Region.name).all()
+    users   = User.query.order_by(User.login_id).all()
+    return render_template(
+        "admin.html", user=user, regions=regions, users=users,
+        error=error, info=info, csrf_token=csrf,
+        selected_region_id=session.get("admin_region_id"),
+    )
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Bootstrap: create tables and seed admin at import time
+# ─────────────────────────────────────────────────────────────────────────────
+
+with app.app_context():
+    db.create_all()
+
+    # Create admin if users table is empty and env vars are provided
+    _admin_username = os.environ.get("ADMIN_USERNAME", "")
+    _admin_password = os.environ.get("ADMIN_PASSWORD", "")
+    if _admin_username and _admin_password:
+        if User.query.count() == 0:
+            admin_user = User(login_id=_admin_username, role="admin",
+                              region_id=None, must_change_password=False)
+            admin_user.set_password(_admin_password)
+            db.session.add(admin_user)
+            db.session.commit()
+            print("INFO: Admin user '{}' created from environment.".format(
+                _admin_username))
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)

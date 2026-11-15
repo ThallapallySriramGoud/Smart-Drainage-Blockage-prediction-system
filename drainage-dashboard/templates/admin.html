@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Admin – Smart Drainage</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Sora:wght@700&family=Public+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #f4f8fc; --card: #ffffff; --text: #0f2342; --muted: #5a6f8c;
+      --border: #dbe6f3; --primary: #2563eb; --primary-dark: #1d4ed8;
+      --error: #e11d48; --ok: #16a34a;
+      --shadow: 0 10px 30px rgba(30,64,120,.10);
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0b1220; --card: #131c2e; --text: #e6edf7;
+        --muted: #93a4bd; --border: #25324a;
+        --shadow: 0 10px 30px rgba(0,0,0,.35);
+      }
+    }
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'Public Sans', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      padding: 32px 20px 60px;
+    }
+    .wrap { max-width: 960px; margin: 0 auto; }
+    .top-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 32px;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+    h1 {
+      font-family: 'Sora', system-ui, sans-serif;
+      font-size: 1.6rem;
+    }
+    .top-links { display: flex; gap: 14px; align-items: center; }
+    .top-links a {
+      font-size: 0.85rem;
+      color: var(--muted);
+      text-decoration: none;
+    }
+    .top-links a:hover { color: var(--primary); }
+
+    .card {
+      background: var(--card);
+      border: 1.5px solid var(--border);
+      border-radius: 18px;
+      box-shadow: var(--shadow);
+      padding: 28px;
+      margin-bottom: 24px;
+    }
+    h2 {
+      font-family: 'Sora', system-ui, sans-serif;
+      font-size: 1.1rem;
+      margin-bottom: 18px;
+    }
+    .msg {
+      border-radius: 8px;
+      font-size: 0.85rem;
+      padding: 10px 14px;
+      margin-bottom: 18px;
+      word-break: break-all;
+    }
+    .msg.error {
+      background: rgba(225,29,72,.08);
+      border: 1px solid rgba(225,29,72,.25);
+      color: var(--error);
+    }
+    .msg.info {
+      background: rgba(22,163,74,.08);
+      border: 1px solid rgba(22,163,74,.25);
+      color: var(--ok);
+    }
+    label {
+      display: block;
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--muted);
+      margin-bottom: 4px;
+    }
+    input[type="text"],
+    select {
+      width: 100%;
+      padding: 9px 12px;
+      border: 1.5px solid var(--border);
+      border-radius: 8px;
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Public Sans', system-ui, sans-serif;
+      font-size: 0.9rem;
+      outline: none;
+      margin-bottom: 14px;
+      transition: border-color .2s;
+    }
+    input:focus, select:focus { border-color: var(--primary); }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+    button {
+      padding: 9px 20px;
+      background: var(--primary);
+      color: #fff;
+      font-family: 'Public Sans', system-ui, sans-serif;
+      font-size: 0.88rem;
+      font-weight: 600;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background .2s;
+    }
+    button:hover { background: var(--primary-dark); }
+    button.secondary {
+      background: transparent;
+      color: var(--primary);
+      border: 1.5px solid var(--primary);
+    }
+    button.secondary:hover { background: rgba(37,99,235,.06); }
+
+    table { width: 100%; border-collapse: collapse; }
+    thead tr { border-bottom: 1.5px solid var(--border); }
+    th {
+      text-align: left;
+      padding: 6px 10px 10px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: .05em;
+    }
+    td {
+      padding: 10px 10px;
+      font-size: 0.88rem;
+      border-bottom: 1px solid var(--border);
+      vertical-align: middle;
+    }
+    tbody tr:hover { background: rgba(37,99,235,.025); }
+    .key-cell {
+      font-family: monospace;
+      font-size: 0.78rem;
+      color: var(--muted);
+      word-break: break-all;
+    }
+    .badge {
+      display: inline-block;
+      padding: 2px 10px;
+      border-radius: 999px;
+      font-size: 0.72rem;
+      font-weight: 600;
+    }
+    .badge-admin    { background: rgba(37,99,235,.12); color: #1e40af; }
+    .badge-operator { background: rgba(22,163,74,.10); color: #15803d; }
+    @media (max-width: 600px) {
+      .row { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="top-bar">
+      <h1>Admin panel</h1>
+      <div class="top-links">
+        <span style="font-size:.85rem;color:var(--muted)">{{ user.login_id }}</span>
+        <a href="{{ url_for('change_password') }}">Change password</a>
+        <a href="{{ url_for('logout') }}">Logout</a>
+      </div>
+    </div>
+
+    {% if error %}
+      <div class="msg error">{{ error }}</div>
+    {% endif %}
+    {% if info %}
+      <div class="msg info">{{ info }}</div>
+    {% endif %}
+
+    <!-- ── Regions ───────────────────────────────────────────────── -->
+    <div class="card">
+      <h2>Regions</h2>
+      {% if regions %}
+      <table>
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Code</th>
+            <th>Device key</th>
+            <th>Dashboard</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in regions %}
+          <tr>
+            <td>{{ r.name }}</td>
+            <td>{{ r.code }}</td>
+            <td class="key-cell">{{ r.device_key }}</td>
+            <td>
+              <form method="post" style="margin:0">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <input type="hidden" name="action"    value="select_region">
+                <input type="hidden" name="region_id" value="{{ r.id }}">
+                <button type="submit" class="secondary"
+                        {% if selected_region_id == r.id %}style="font-weight:800"{% endif %}>
+                  View dashboard
+                </button>
+              </form>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+        <p style="color:var(--muted);font-size:.88rem">No regions yet.</p>
+      {% endif %}
+    </div>
+
+    <!-- ── Create region ─────────────────────────────────────────── -->
+    <div class="card">
+      <h2>Create region</h2>
+      <form method="post" novalidate>
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="action"     value="create_region">
+        <div class="row">
+          <div>
+            <label for="rname">Region name</label>
+            <input type="text" id="rname" name="name" placeholder="Ward 1 – North Zone" required>
+          </div>
+          <div>
+            <label for="rcode">Short code</label>
+            <input type="text" id="rcode" name="code" placeholder="ward-1-north" required>
+          </div>
+        </div>
+        <button type="submit">Create region</button>
+      </form>
+    </div>
+
+    <!-- ── Create operator ───────────────────────────────────────── -->
+    <div class="card">
+      <h2>Create operator</h2>
+      <form method="post" novalidate>
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="action"     value="create_operator">
+        <div class="row">
+          <div>
+            <label for="op_login">Login ID</label>
+            <input type="text" id="op_login" name="login_id"
+                   placeholder="north-01" required>
+          </div>
+          <div>
+            <label for="op_region">Region</label>
+            <select id="op_region" name="region_id" required>
+              <option value="">— select —</option>
+              {% for r in regions %}
+                <option value="{{ r.id }}">{{ r.name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+        </div>
+        <p style="font-size:.8rem;color:var(--muted);margin-bottom:14px">
+          A temporary password is generated and shown once. The operator must
+          change it on first login.
+        </p>
+        <button type="submit">Create operator</button>
+      </form>
+    </div>
+
+    <!-- ── Users + reset password ────────────────────────────────── -->
+    <div class="card">
+      <h2>Users</h2>
+      {% if users %}
+      <table>
+        <thead>
+          <tr>
+            <th>Login ID</th>
+            <th>Role</th>
+            <th>Region</th>
+            <th>Must change PW</th>
+            <th>Reset password</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for u in users %}
+          <tr>
+            <td>{{ u.login_id }}</td>
+            <td>
+              <span class="badge badge-{{ u.role }}">{{ u.role }}</span>
+            </td>
+            <td>{{ u.region.name if u.region else '—' }}</td>
+            <td>{{ 'Yes' if u.must_change_password else 'No' }}</td>
+            <td>
+              <form method="post" style="margin:0">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <input type="hidden" name="action"  value="reset_password">
+                <input type="hidden" name="user_id" value="{{ u.id }}">
+                <button type="submit" class="secondary">Reset</button>
+              </form>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+        <p style="color:var(--muted);font-size:.88rem">No users yet.</p>
+      {% endif %}
+    </div>
+
+  </div>
+</body>
+</html>

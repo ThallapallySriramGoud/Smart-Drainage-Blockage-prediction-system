@@ -25,14 +25,26 @@ import json
 import time
 import random
 import os
+import sys
 
 # Server URL - configurable via environment variable
 BASE_URL = os.environ.get(
     "SERVER_URL",
     "https://smart-drainage-blockage-prediction-system.onrender.com")
-DATA_URL = BASE_URL.rstrip("/") + "/api/data"
+DATA_URL     = BASE_URL.rstrip("/") + "/api/data"
 MATERIAL_URL = BASE_URL.rstrip("/") + "/api/material"
-API_KEY = "change-me"
+
+# Device key — must match a Region.device_key on the server.
+# Set the REGION_KEY environment variable before running:
+#   Windows:  set REGION_KEY=<your-key>
+#   Linux/Mac: export REGION_KEY=<your-key>
+REGION_KEY = os.environ.get("REGION_KEY", "")
+if not REGION_KEY:
+    print("ERROR: REGION_KEY environment variable is not set.")
+    print("       Run 'python seed.py' to generate region keys, then:")
+    print("         Windows:   set REGION_KEY=<key>")
+    print("         Linux/Mac: export REGION_KEY=<key>")
+    sys.exit(1)
 
 
 def send(payload):
@@ -41,7 +53,7 @@ def send(payload):
     req = urllib.request.Request(
         DATA_URL,
         data=body,
-        headers={"Content-Type": "application/json", "X-API-Key": API_KEY},
+        headers={"Content-Type": "application/json", "X-API-Key": REGION_KEY},
     )
     try:
         with urllib.request.urlopen(req, timeout=10) as resp:
@@ -70,7 +82,7 @@ def send_material(material, confidence, ir_detected):
     req = urllib.request.Request(
         MATERIAL_URL,
         data=payload,
-        headers={"Content-Type": "application/json", "X-API-Key": API_KEY},
+        headers={"Content-Type": "application/json", "X-API-Key": REGION_KEY},
     )
     try:
         with urllib.request.urlopen(req, timeout=10) as resp:
@@ -114,6 +126,7 @@ def main():
     print("=" * 60)
     print("  Smart Drainage Monitoring System - Simulator")
     print("  Server:   {}".format(BASE_URL))
+    print("  Region key: {}...".format(REGION_KEY[:8]))
     print("  Material: {} (will be sent during blockage phase)".format(
         chosen_material))
     print("=" * 60)
