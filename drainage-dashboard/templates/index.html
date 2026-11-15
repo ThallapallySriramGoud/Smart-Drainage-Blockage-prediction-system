@@ -539,6 +539,141 @@
     }
 
     /* =====================================================================
+       RECOMMENDED ACTION CARD (incident playbook)
+       ===================================================================== */
+    #incident-card {
+      background: var(--card);
+      border: 1.5px solid var(--border);
+      border-radius: var(--r-panel);
+      box-shadow: var(--shadow);
+      padding: 22px 24px 24px;
+      margin-bottom: 28px;
+      display: none;              /* hidden when no active incident */
+    }
+    #incident-card.visible { display: block; }
+
+    .inc-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 14px;
+      flex-wrap: wrap;
+    }
+    .inc-badge {
+      display: inline-block;
+      padding: 3px 12px;
+      border-radius: 999px;
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+    }
+    .inc-badge.urgent  { background: rgba(225,29,72,.14); color: var(--blockage); }
+    .inc-badge.routine { background: rgba(217,119,6,.12); color: var(--warning);  }
+
+    .inc-title {
+      font-family: 'Sora', system-ui, sans-serif;
+      font-size: 1.1rem;
+      font-weight: 700;
+      color: var(--text);
+      flex: 1;
+      min-width: 0;
+    }
+    .inc-meta {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      margin-bottom: 10px;
+    }
+    .inc-summary {
+      font-size: 0.95rem;
+      color: var(--text);
+      margin-bottom: 16px;
+      line-height: 1.55;
+    }
+    .inc-steps {
+      list-style: none;
+      padding: 0;
+      margin-bottom: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .inc-steps li {
+      display: flex;
+      gap: 10px;
+      font-size: 0.9rem;
+      color: var(--text);
+      align-items: flex-start;
+    }
+    .inc-step-num {
+      flex-shrink: 0;
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      background: #eff6ff;
+      border: 1.5px solid #bfdbfe;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.7rem;
+      font-weight: 700;
+      color: var(--water);
+      margin-top: 1px;
+    }
+    @media (prefers-color-scheme: dark) {
+      .inc-step-num { background: rgba(37,99,235,.18); border-color: rgba(37,99,235,.4); }
+    }
+    .inc-tools {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 7px;
+      margin-bottom: 16px;
+    }
+    .inc-tool-chip {
+      padding: 3px 11px;
+      border: 1.5px solid var(--border);
+      border-radius: 999px;
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      background: var(--bg);
+    }
+    .inc-safety {
+      background: rgba(217,119,6,.07);
+      border: 1px solid rgba(217,119,6,.22);
+      border-radius: 10px;
+      padding: 12px 14px;
+      margin-bottom: 14px;
+    }
+    .inc-safety-title {
+      font-size: 0.78rem;
+      font-weight: 700;
+      color: var(--warning);
+      margin-bottom: 6px;
+    }
+    .inc-safety ul {
+      list-style: disc;
+      padding-left: 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+    .inc-safety li {
+      font-size: 0.82rem;
+      color: var(--text-muted);
+    }
+    .inc-footer {
+      display: flex;
+      gap: 20px;
+      flex-wrap: wrap;
+      font-size: 0.82rem;
+      color: var(--text-muted);
+      border-top: 1px solid var(--border);
+      padding-top: 12px;
+      margin-top: 4px;
+    }
+    .inc-footer strong { color: var(--text); }
+
+    /* =====================================================================
        LOWER ROW — material summary + alert log
        ===================================================================== */
     .lower-row {
@@ -927,6 +1062,29 @@
       </div>
 
     </div><!-- /#cards -->
+
+    <!-- Recommended action (incident playbook) — hidden when no active incident -->
+    <div id="incident-card">
+      <div class="inc-header">
+        <span id="inc-badge" class="inc-badge routine">ROUTINE</span>
+        <div class="inc-title" id="inc-title">Recommended action</div>
+      </div>
+      <div class="inc-meta" id="inc-meta"></div>
+      <div class="inc-summary" id="inc-summary"></div>
+      <ol class="inc-steps" id="inc-steps"></ol>
+      <div>
+        <div class="section-label" style="margin-bottom:8px">Tools needed</div>
+        <div class="inc-tools" id="inc-tools"></div>
+      </div>
+      <div class="inc-safety" style="margin-top:14px">
+        <div class="inc-safety-title">Safety reminders</div>
+        <ul id="inc-safety"></ul>
+      </div>
+      <div class="inc-footer">
+        <div><strong>Crew:</strong> <span id="inc-crew"></span></div>
+        <div><strong>Est. time:</strong> <span id="inc-est-time"></span> min</div>
+      </div>
+    </div>
 
     <!-- Charts -->
     <div id="charts">
@@ -1430,6 +1588,82 @@
       }).join("");
     }
 
+    /* ---- Update the recommended-action incident card ---- */
+    function updateIncident(incident) {
+      var card = document.getElementById("incident-card");
+      if (!incident || !incident.plan) {
+        card.classList.remove("visible");
+        return;
+      }
+      card.classList.add("visible");
+
+      var plan = incident.plan;
+      var MAT  = MAT_COLORS;
+
+      // Urgency badge
+      var badge = document.getElementById("inc-badge");
+      badge.textContent = plan.urgency || "ROUTINE";
+      badge.className = "inc-badge " + ((plan.urgency === "URGENT") ? "urgent" : "routine");
+
+      // Title line: incident number + location
+      document.getElementById("inc-title").textContent =
+          (plan.title || "Recommended action") +
+          " \u2013 Incident #" + incident.id +
+          " (" + (incident.location || "") + ")";
+
+      // Meta: material with its colour + confidence + time detected
+      var matColor = MAT[incident.material] || "var(--text-muted)";
+      var confStr  = (incident.confidence !== null && incident.confidence !== undefined)
+                      ? " \u00b7 " + Math.round(incident.confidence * 100) + "% confidence"
+                      : "";
+      var detAt    = incident.detected_at
+                      ? " \u00b7 Detected at " + fmtTime(incident.detected_at)
+                      : "";
+      document.getElementById("inc-meta").innerHTML =
+          "<span style='color:" + matColor + ";font-weight:700'>" +
+          (incident.material || "Unknown") + "</span>" + confStr + detAt;
+
+      // Summary
+      document.getElementById("inc-summary").textContent = plan.summary || "";
+
+      // Steps
+      var stepsEl = document.getElementById("inc-steps");
+      stepsEl.innerHTML = "";
+      var steps = plan.steps || [];
+      steps.forEach(function(step, i) {
+        var li = document.createElement("li");
+        li.innerHTML =
+            "<span class='inc-step-num'>" + (i + 1) + "</span>" +
+            "<span>" + step + "</span>";
+        stepsEl.appendChild(li);
+      });
+
+      // Tool chips
+      var toolsEl = document.getElementById("inc-tools");
+      toolsEl.innerHTML = "";
+      var tools = plan.tools || [];
+      tools.forEach(function(t) {
+        var chip = document.createElement("span");
+        chip.className   = "inc-tool-chip";
+        chip.textContent = t;
+        toolsEl.appendChild(chip);
+      });
+
+      // Safety notes
+      var safetyEl = document.getElementById("inc-safety");
+      safetyEl.innerHTML = "";
+      var safety = plan.safety || [];
+      safety.forEach(function(s) {
+        var li = document.createElement("li");
+        li.textContent = s;
+        safetyEl.appendChild(li);
+      });
+
+      // Footer
+      document.getElementById("inc-crew").textContent     = plan.crew || "";
+      document.getElementById("inc-est-time").textContent = plan.est_time_min || "";
+    }
+
     /* ---- Show "no data" state ---- */
     function showNoData() {
       var el = document.getElementById("connection-status");
@@ -1443,6 +1677,7 @@
       cm.removeAttribute("data-m");
       document.getElementById("card-material-detail").textContent = "no data";
       updateBlockageCause(null);
+      updateIncident(null);
     }
 
     /* ---- Main refresh loop: poll all three endpoints ---- */
@@ -1489,6 +1724,7 @@
           updateMatSummary();
           updateCharts(history, config);
           updateAlerts(alerts);
+          updateIncident(latest.incident || null);
         })
         .catch(function() {
           var el = document.getElementById("connection-status");

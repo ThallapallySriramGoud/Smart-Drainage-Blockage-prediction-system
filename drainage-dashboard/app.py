@@ -38,6 +38,8 @@ from flask_sqlalchemy import SQLAlchemy
 from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.security import check_password_hash, generate_password_hash
 
+from playbook import get_plan
+
 # ─────────────────────────────────────────────────────────────────────────────
 # App setup
 # ─────────────────────────────────────────────────────────────────────────────
@@ -197,6 +199,54 @@ class Alert(db.Model):
     message   = db.Column(db.Text,    nullable=False)
 
     region = db.relationship("Region", back_populates="alerts")
+
+
+# ── Incident ──────────────────────────────────────────────────────────────────
+
+class Incident(db.Model):
+    """
+    Tracks a blockage event from first detection to clearance.
+
+    sensor_state  : "ACTIVE" while sensors still show blockage;
+                    "CLEARED" once five consecutive NORMAL readings arrive.
+    status        : workflow state (Phase 3 will add transitions; default
+                    "DETECTED" for now and nothing changes it in Phase 2).
+    normal_streak : counts consecutive NORMAL readings; resets on any
+                    non-NORMAL reading; at 5 the incident is CLEARED.
+    """
+    __tablename__ = "incidents"
+
+    id                  = db.Column(db.Integer, primary_key=True)
+    region_id           = db.Column(db.Integer,
+                                    db.ForeignKey("regions.id"),
+                                    nullable=False, index=True)
+    # Channel segment, e.g. "B-C", "A-B", "after C"
+    location            = db.Column(db.String(20),  nullable=False)
+    # Worst status reached during this incident
+    severity            = db.Column(db.String(20),  nullable=False)   # BLOCKAGE | CRITICAL
+    confirmed           = db.Column(db.Boolean,     nullable=False, default=False)
+    # Identified obstruction
+    material            = db.Column(db.String(40),  nullable=False,
+                                    default="Not identified")
+    material_confidence = db.Column(db.Float,       nullable=True)
+    # Workflow status (Phase 3 will add more transitions)
+    status              = db.Column(db.String(30),  nullable=False, default="DETECTED")
+    # Sensor lifecycle
+    sensor_state        = db.Column(db.String(20),  nullable=False, default="ACTIVE")
+    normal_streak       = db.Column(db.Integer,     nullable=False, default=0)
+    # Timestamps (UTC Unix floats, consistent with every other table)
+    detected_at         = db.Column(db.Float,       nullable=False)
+    cleared_at          = db.Column(db.Float,       nullable=True)
+    # Sensor extremes since the incident opened
+    peak_depth_b        = db.Column(db.Float,       nullable=True)
+    min_flow            = db.Column(db.Float,       nullable=True)
+    # JSON text – last 10 readings at detection
+    snapshot            = db.Column(db.Text,        nullable=True)
+    # JSON text – playbook plan at opening (or most recent update)
+    plan                = db.Column(db.Text,        nullable=True)
+    plan_updated_at     = db.Column(db.Float,       nullable=True)
+
+    region = db.relationship("Region")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Detection logic (unchanged from original)
@@ -398,6 +448,191 @@ def _blockage_cause(region_id):
     }
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Incident engine
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Severity ordering – higher index = worse.
+_SEV_ORDER = ["WARNING", "BLOCKAGE", "CRITICAL"]
+
+
+def _active_incident_dict(region_id):
+    """Return the active Incident for a region as a dict, or None."""
+    inc = (Incident.query
+           .filter_by(region_id=region_id, sensor_state="ACTIVE")
+           .first())
+    if inc is None:
+        return None
+    return _incident_dict(inc)
+
+
+def _incident_dict(inc):
+    """Serialise an Incident row to a plain dict for API responses."""
+    import json as _json
+    plan_obj = None
+    try:
+        if inc.plan:
+            plan_obj = _json.loads(inc.plan)
+    except Exception:
+        pass
+    return {
+        "id":           inc.id,
+        "status":       inc.status,
+        "severity":     inc.severity,
+        "confirmed":    inc.confirmed,
+        "location":     inc.location,
+        "material":     inc.material,
+        "confidence":   inc.material_confidence,
+        "sensor_state": inc.sensor_state,
+        "detected_at":  inc.detected_at,
+        "cleared_at":   inc.cleared_at,
+        "plan":         plan_obj,
+    }
+
+
+def _refresh_plan(inc):
+    """Regenerate and store the playbook plan for an incident."""
+    import json as _json
+    plan_obj = get_plan(inc.material, inc.severity, inc.location)
+    inc.plan            = _json.dumps(plan_obj)
+    inc.plan_updated_at = time.time()
+
+
+def update_incident(region, analysis, reading):
+    """
+    Update incident records for a region after each sensor reading.
+
+    Rules
+    -----
+    * BLOCKAGE or CRITICAL with no ACTIVE incident at this location
+      → open a new Incident, snapshot the last 10 readings, generate a plan,
+        log an alert.
+    * ACTIVE incident at this location:
+      → raise severity if status is worse (never downgrade);
+        update peak_depth_b and min_flow;
+        reset normal_streak when status is not NORMAL.
+    * NORMAL reading and an ACTIVE incident:
+      → increment normal_streak; at 5 clear the incident.
+
+    Uses only the database – no module-level state – so it is safe with
+    multiple gunicorn workers.
+    """
+    import json as _json
+
+    status   = analysis["status"]
+    location = analysis["location"]
+    now      = time.time()
+
+    # Only the blockage statuses matter here.
+    is_blockage = status in ("BLOCKAGE", "CRITICAL")
+    is_warning  = status == "WARNING"
+    is_normal   = status == "NORMAL"
+
+    # ── Find the ACTIVE incident for this region+location (if any) ──────────
+    active_location = location if location else None
+
+    active = None
+    if active_location:
+        active = (Incident.query
+                  .filter_by(region_id=region.id,
+                             location=active_location,
+                             sensor_state="ACTIVE")
+                  .first())
+
+    # Also look for any ACTIVE incident for this region (needed for the
+    # normal-streak logic when location becomes "").
+    any_active = (Incident.query
+                  .filter_by(region_id=region.id, sensor_state="ACTIVE")
+                  .first())
+
+    # ── Case 1: Blockage with no active incident at this location ────────────
+    if is_blockage and active is None:
+        # Fetch the last 10 readings for the snapshot.
+        last_rows = (Reading.query
+                     .filter_by(region_id=region.id)
+                     .order_by(Reading.id.desc())
+                     .limit(10)
+                     .all())
+        snapshot_data = [
+            {"ts": r.ts, "depth_a": r.depth_a, "depth_b": r.depth_b,
+             "depth_c": r.depth_c, "flow": r.flow, "temp": r.temp}
+            for r in reversed(last_rows)
+        ]
+
+        # Identify the best available material for this incident.
+        cause = _blockage_cause(region.id)
+        mat   = cause["material"]
+        conf  = cause["confidence"]
+
+        inc = Incident(
+            region_id=region.id,
+            location=location,
+            severity=status,
+            confirmed=analysis["confirmed"],
+            material=mat,
+            material_confidence=conf,
+            sensor_state="ACTIVE",
+            normal_streak=0,
+            detected_at=now,
+            peak_depth_b=reading.get("depth_b"),
+            min_flow=reading.get("flow"),
+            snapshot=_json.dumps(snapshot_data),
+        )
+        # Generate initial plan.
+        _refresh_plan(inc)
+
+        db.session.add(inc)
+        db.session.flush()   # populate inc.id before writing the alert
+
+        db.session.add(Alert(
+            region_id=region.id,
+            ts=now,
+            status="BLOCKAGE",
+            location=location,
+            message="Incident #{} opened ({})".format(inc.id, location),
+        ))
+
+    # ── Case 2: Blockage with an existing active incident ───────────────────
+    elif is_blockage and active is not None:
+        # Raise severity if the status got worse; never lower it.
+        try:
+            if _SEV_ORDER.index(status) > _SEV_ORDER.index(active.severity):
+                active.severity = status
+                _refresh_plan(active)
+        except ValueError:
+            pass   # status not in _SEV_ORDER – ignore
+
+        # Always update confirmed if newly confirmed.
+        if analysis["confirmed"] and not active.confirmed:
+            active.confirmed = True
+
+        # Update extremes.
+        depth_b = reading.get("depth_b")
+        flow    = reading.get("flow")
+        if depth_b is not None:
+            if active.peak_depth_b is None or depth_b > active.peak_depth_b:
+                active.peak_depth_b = depth_b
+        if flow is not None:
+            if active.min_flow is None or flow < active.min_flow:
+                active.min_flow = flow
+
+        # Non-normal reading resets the clearance streak.
+        active.normal_streak = 0
+
+    # ── Case 3: Normal reading — advance the clearance streak ───────────────
+    if is_normal and any_active is not None:
+        any_active.normal_streak += 1
+        if any_active.normal_streak >= 5:
+            any_active.sensor_state = "CLEARED"
+            any_active.cleared_at   = now
+            db.session.add(Alert(
+                region_id=region.id,
+                ts=now,
+                status="NORMAL",
+                location=any_active.location,
+                message="Incident #{}: sensors back to normal".format(any_active.id),
+            ))
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Rate-limiting helpers (in-memory, fine for one or two workers)
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -591,7 +826,21 @@ def api_data():
             message=msg,
         ))
 
+    # ── Incident engine ─────────────────────────────────────────────────────
+    # Flush first so the new reading is visible to update_incident's snapshot
+    # query, then call the engine, then commit everything in one transaction.
+    db.session.flush()
+    update_incident(region, result, {
+        "depth_b": reading["depth_b"],
+        "flow":    reading["flow"],
+    })
+
     db.session.commit()
+
+    # Include the active incident (if any) in the reply to the ESP32.
+    active_inc = (Incident.query
+                  .filter_by(region_id=region.id, sensor_state="ACTIVE")
+                  .first())
 
     reply = {
         "status":   result["status"],
@@ -602,6 +851,8 @@ def api_data():
         reply["blockage_cause"]            = cause["material"]
         reply["blockage_cause_confidence"] = cause["confidence"]
         reply["blockage_advice"]           = cause["advice"]
+    if active_inc:
+        reply["incident_id"] = active_inc.id
     return jsonify(reply)
 
 
@@ -663,6 +914,16 @@ def api_material():
             status="MATERIAL", location="", message=msg,
         ))
 
+    # ── Update active incident if a confident material is now known ──────────
+    if material != "UNKNOWN" and confidence >= CONFIDENCE_THRESHOLD:
+        active_inc = (Incident.query
+                      .filter_by(region_id=region.id, sensor_state="ACTIVE")
+                      .first())
+        if active_inc is not None:
+            active_inc.material            = material
+            active_inc.material_confidence = confidence
+            _refresh_plan(active_inc)
+
     db.session.commit()
     return jsonify({"material": material, "confidence": confidence,
                     "ir_detected": ir_detected})
@@ -693,6 +954,7 @@ def api_latest():
             "config": CFG,
             "region_name": region.name,
             "material": _latest_material(region.id),
+            "incident": _active_incident_dict(region.id),
         })
 
     rows = [
@@ -721,6 +983,8 @@ def api_latest():
             _blockage_cause(region.id) if result["status"] != "NORMAL" else None
         ),
         "analysis": result,
+        # Active incident for the "Recommended action" card on the dashboard.
+        "incident": _active_incident_dict(region.id),
     })
 
 
@@ -770,6 +1034,24 @@ def api_alerts():
             for a in db_rows
         ]
     })
+
+
+@app.route("/api/incidents")
+@login_required
+def api_incidents():
+    """Return recent incidents for the user's region, newest first."""
+    user   = _current_user()
+    region = _region_for_session(user)
+    if region is None:
+        return jsonify({"incidents": []})
+
+    limit = min(max(1, request.args.get("limit", 20, type=int)), 200)
+    rows  = (Incident.query
+             .filter_by(region_id=region.id)
+             .order_by(Incident.id.desc())
+             .limit(limit)
+             .all())
+    return jsonify({"incidents": [_incident_dict(r) for r in rows]})
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Dashboard page
