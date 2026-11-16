@@ -880,6 +880,12 @@
         </div>
       </header>
 
+      {% if no_region_message %}
+      <div style="background:rgba(225,29,72,.08);border:1.5px solid rgba(225,29,72,.25);border-radius:12px;padding:20px 24px;margin-bottom:20px;color:#e11d48;font-size:0.95rem;text-align:center;">
+        {{ no_region_message }}
+      </div>
+      {% endif %}
+
       <!-- Status banner — id and all inner ids preserved -->
       <div id="status-banner">
         <div class="banner-row">

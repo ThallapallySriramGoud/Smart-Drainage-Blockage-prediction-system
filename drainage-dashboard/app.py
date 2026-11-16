@@ -35,6 +35,7 @@ from flask import (
     url_for,
 )
 from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy import func
 from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.security import check_password_hash, generate_password_hash
 
@@ -92,7 +93,7 @@ app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 # Session cookie settings
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
-app.config["SESSION_COOKIE_SECURE"] = ON_RENDER   # Secure only on HTTPS
+app.config["SESSION_COOKIE_SECURE"] = ON_RENDER   # Secure on Render (HTTPS); off for local HTTP
 app.config["PERMANENT_SESSION_LIFETIME"] = 8 * 3600  # 8 hours
 
 db = SQLAlchemy(app)
@@ -634,12 +635,23 @@ def update_incident(region, analysis, reading):
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Rate-limiting helpers (in-memory, fine for one or two workers)
+#
+# NOTE: This dict lives in each worker's process memory. With multiple
+# gunicorn workers the counters are not shared, so an attacker can get
+# MAX_ATTEMPTS * num_workers tries before all workers block them. For
+# a small deployment this is acceptable; for high-security setups,
+# move the counters to Redis or the database.
 # ─────────────────────────────────────────────────────────────────────────────
 
-# {key: [timestamp, ...]}  key is "ip:<ip>" or "id:<login_id>"
+# {key: [timestamp, ...]}  key is "<ip>:<login_id>"
 _bad_attempts = defaultdict(list)
 _BLOCK_WINDOW = 300          # 5 minutes
 _MAX_ATTEMPTS = 5
+
+
+def _rate_key(ip, login_id):
+    """Build a rate-limit key from IP + login_id (both lowered)."""
+    return "{}:{}".format(ip, login_id.lower())
 
 
 def _is_blocked(key):
@@ -674,6 +686,10 @@ def _csrf_ok():
     if not token or not submitted:
         return False
     return hmac.compare_digest(token, submitted)
+
+
+_CSRF_ERROR = ("Session expired or cookies are disabled. "
+               "Refresh the page and try again.")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Auth helpers / decorators
@@ -1067,6 +1083,14 @@ def index():
     # dashboard; send them to the admin panel to choose one.
     if user.role == "admin" and region is None:
         return redirect(url_for("admin"))
+    # An operator with no region assigned cannot view any data.
+    if user.role == "operator" and region is None:
+        return render_template(
+            "index.html",
+            user=user,
+            region=None,
+            no_region_message="No region assigned to your account. Please contact an administrator.",
+        )
     return render_template(
         "index.html",
         user=user,
@@ -1088,9 +1112,9 @@ def login():
 
     if request.method == "POST":
         if not _csrf_ok():
-            error = "Invalid request. Please try again."
+            error = _CSRF_ERROR
         else:
-            login_id = request.form.get("login_id", "").strip()
+            login_id = request.form.get("login_id", "").strip().lower()
             password = request.form.get("password", "")
             role     = request.form.get("role", "operator")
             # Sanitise: only the two known values are accepted
@@ -1098,20 +1122,20 @@ def login():
                 role = "operator"
             selected_role = role
 
-            ip_key = "ip:{}".format(request.remote_addr)
-            id_key = "id:{}".format(login_id)
+            rate_key = _rate_key(request.remote_addr, login_id)
 
-            if _is_blocked(ip_key) or _is_blocked(id_key):
+            if _is_blocked(rate_key):
                 error = "Too many failed attempts. Try again in 5 minutes."
             else:
-                user = User.query.filter_by(login_id=login_id).first()
+                user = User.query.filter(
+                    func.lower(User.login_id) == login_id
+                ).first()
                 # Accept only when: user exists, password is correct,
                 # AND the user's actual role matches what was selected.
                 # Every other combination shows the same neutral message so
                 # callers cannot enumerate roles.
                 if user and user.check_password(password) and user.role == role:
-                    _clear_failures(ip_key)
-                    _clear_failures(id_key)
+                    _clear_failures(rate_key)
                     session.permanent = True
                     session["user_id"] = user.id
                     user.last_login_at = datetime.now(timezone.utc)
@@ -1124,8 +1148,7 @@ def login():
                         return redirect(next_url)
                     return redirect(url_for("index"))
                 else:
-                    _record_failure(ip_key)
-                    _record_failure(id_key)
+                    _record_failure(rate_key)
                     error = "User not found or incorrect password"
 
     csrf = _csrf_token()
@@ -1148,7 +1171,7 @@ def change_password():
 
     if request.method == "POST":
         if not _csrf_ok():
-            error = "Invalid request. Please try again."
+            error = _CSRF_ERROR
         else:
             current  = request.form.get("current_password", "")
             new_pw   = request.form.get("new_password", "")
@@ -1188,7 +1211,7 @@ def admin():
 
     if request.method == "POST":
         if not _csrf_ok():
-            error = "Invalid request. Please try again."
+            error = _CSRF_ERROR
         else:
             action = request.form.get("action", "")
 
@@ -1214,13 +1237,15 @@ def admin():
                     info = "Region created. Device key: {}".format(key)
 
             elif action == "create_operator":
-                login_id  = request.form.get("login_id", "").strip()
+                login_id  = request.form.get("login_id", "").strip().lower()
                 rid       = request.form.get("region_id", type=int)
                 tmp_pw    = secrets.token_urlsafe(10)
                 region    = db.session.get(Region, rid)
                 if not login_id or not region:
                     error = "Login ID and region are required."
-                elif User.query.filter_by(login_id=login_id).first():
+                elif User.query.filter(
+                    func.lower(User.login_id) == login_id
+                ).first():
                     error = "A user with that login ID already exists."
                 else:
                     u = User(login_id=login_id, role="operator",
