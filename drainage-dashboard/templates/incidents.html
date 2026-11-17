@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="csrf-token" content="{{ csrf_token }}">
+  <title>Incident history – Smart Drainage</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Sora:wght@700&family=Public+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    /* ── Design tokens (same values as index.html) ── */
+    :root {
+      --bg:        #f4f8fc; --card:    #ffffff; --text:    #0f2342;
+      --muted:     #5a6f8c; --border:  #dbe6f3; --water:   #2563eb;
+      --normal:    #16a34a; --warning: #d97706; --blockage:#e11d48;
+      --critical:  #dc2626;
+      --shadow:    0 10px 30px rgba(30,64,120,.10);
+      --shadow-sm: 0 4px 14px rgba(30,64,120,.07);
+      --r: 18px;
+      --font-head: 'Sora','Segoe UI',system-ui,sans-serif;
+      --font-body: 'Public Sans','Segoe UI',system-ui,sans-serif;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg:#0b1220; --card:#131c2e; --text:#e6edf7;
+        --muted:#93a4bd; --border:#25324a;
+        --shadow:0 10px 30px rgba(0,0,0,.35);
+        --shadow-sm:0 4px 14px rgba(0,0,0,.25);
+      }
+    }
+    *,*::before,*::after { margin:0; padding:0; box-sizing:border-box; }
+    html { scroll-behavior:smooth; }
+    body {
+      font-family:var(--font-body); font-weight:400;
+      background:var(--bg); color:var(--text);
+      min-height:100vh; line-height:1.5;
+    }
+    :focus-visible { outline:3px solid var(--water); outline-offset:3px; border-radius:4px; }
+
+    /* ── Page header bar ── */
+    .page-header {
+      background: radial-gradient(900px 400px at 85% -10%,rgba(96,165,250,.25),transparent 60%),
+                  linear-gradient(160deg,#ffffff 0%,#e8f3ff 60%,#cfe6ff 100%);
+      border-bottom:1.5px solid var(--border);
+      padding:0 24px;
+      box-shadow:var(--shadow-sm);
+    }
+    @media (prefers-color-scheme:dark) {
+      .page-header { background:linear-gradient(160deg,#0b1220 0%,#16243f 100%); }
+    }
+    .page-header-inner {
+      max-width:1180px; margin:0 auto; height:60px;
+      display:flex; align-items:center; justify-content:space-between; gap:16px;
+    }
+    .page-header h1 {
+      font-family:var(--font-head); font-size:1.15rem; font-weight:700; color:var(--text);
+      white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+    }
+    .page-header-links {
+      display:flex; align-items:center; gap:14px; flex-shrink:0; flex-wrap:wrap;
+    }
+    .page-header-links a {
+      font-size:.8rem; color:var(--muted); text-decoration:none; white-space:nowrap;
+    }
+    .page-header-links a:hover { color:var(--water); }
+
+    /* ── Main content wrapper ── */
+    .wrap { max-width:1180px; margin:0 auto; padding:28px 24px 48px; }
+    @media (max-width:480px) { .wrap { padding:20px 14px 40px; } }
+
+    /* ── Panel / card ── */
+    .panel {
+      background:var(--card); border:1.5px solid var(--border);
+      border-radius:var(--r); box-shadow:var(--shadow-sm);
+      margin-bottom:20px;
+    }
+    .panel-body { padding:20px 22px; }
+    .panel-title {
+      font-family:var(--font-head); font-size:.9rem; font-weight:700;
+      color:var(--muted); margin-bottom:14px; letter-spacing:.03em; text-transform:uppercase;
+    }
+
+    /* ── Stats strip ── */
+    .stats-strip {
+      display:grid; grid-template-columns:repeat(6,1fr);
+      gap:0; border-radius:var(--r); overflow:hidden;
+      border:1.5px solid var(--border); box-shadow:var(--shadow-sm);
+      margin-bottom:20px;
+    }
+    .stat-item {
+      background:var(--card); padding:14px 16px;
+      border-right:1px solid var(--border);
+      display:flex; flex-direction:column; gap:3px;
+    }
+    .stat-item:last-child { border-right:none; }
+    .stat-label { font-size:.72rem; font-weight:600; color:var(--muted); }
+    .stat-value {
+      font-family:var(--font-head); font-size:1.4rem; font-weight:700; color:var(--text);
+    }
+    .stat-value.ok   { color:var(--normal);   }
+    .stat-value.warn { color:var(--warning);  }
+    @media (max-width:900px) { .stats-strip { grid-template-columns:repeat(3,1fr); } }
+    @media (max-width:500px) { .stats-strip { grid-template-columns:repeat(2,1fr); } }
+
+    /* ── Filter bar ── */
+    .filter-form {
+      display:flex; flex-wrap:wrap; gap:10px; align-items:flex-end;
+    }
+    .filter-group { display:flex; flex-direction:column; gap:4px; min-width:120px; }
+    .filter-group label { font-size:.75rem; font-weight:600; color:var(--muted); }
+    .filter-group select,
+    .filter-group input[type="date"],
+    .filter-group input[type="text"] {
+      padding:7px 10px; border:1.5px solid var(--border); border-radius:8px;
+      background:var(--bg); color:var(--text);
+      font-family:var(--font-body); font-size:.85rem; outline:none;
+      transition:border-color .2s;
+    }
+    .filter-group select:focus,
+    .filter-group input:focus { border-color:var(--water); }
+    .filter-checkbox {
+      display:flex; align-items:center; gap:7px;
+      font-size:.85rem; color:var(--text); cursor:pointer;
+      align-self:flex-end; padding-bottom:8px;
+    }
+    .filter-checkbox input { accent-color:var(--water); width:15px; height:15px; }
+    .btn {
+      padding:8px 18px; border-radius:8px; font-family:var(--font-body);
+      font-size:.85rem; font-weight:600; cursor:pointer;
+      border:1.5px solid var(--border); background:var(--card); color:var(--text);
+      transition:background .15s, border-color .15s; white-space:nowrap;
+      text-decoration:none; display:inline-block; line-height:1.4;
+    }
+    .btn:hover { background:#eff6ff; border-color:var(--water); }
+    .btn.primary { background:var(--water); border-color:var(--water); color:#fff; }
+    .btn.primary:hover { background:#1d4ed8; border-color:#1d4ed8; }
+    .btn.sm { padding:5px 12px; font-size:.78rem; }
+    @media (prefers-color-scheme:dark) {
+      .btn:hover { background:rgba(37,99,235,.15); border-color:var(--water); }
+    }
+
+    /* ── Table ── */
+    .table-scroll { overflow-x:auto; -webkit-overflow-scrolling:touch; }
+    table { width:100%; border-collapse:collapse; min-width:720px; }
+    thead tr { border-bottom:1.5px solid var(--border); }
+    th {
+      text-align:left; padding:8px 12px 11px;
+      font-size:.72rem; font-weight:600; color:var(--muted);
+      text-transform:uppercase; letter-spacing:.05em; white-space:nowrap;
+    }
+    td {
+      text-align:left; padding:10px 12px; font-size:.85rem;
+      border-bottom:1px solid var(--border); vertical-align:middle; color:var(--text);
+    }
+    tbody tr:nth-child(even) { background:rgba(37,99,235,.025); }
+    tbody tr:hover { background:#eff6ff; }
+    @media (prefers-color-scheme:dark) { tbody tr:hover { background:rgba(37,99,235,.12); } }
+
+    /* ── Empty state ── */
+    .empty-state {
+      padding:48px 24px; text-align:center; color:var(--muted); font-size:.95rem;
+    }
+    .empty-state-icon {
+      font-size:2rem; margin-bottom:10px; opacity:.4;
+    }
+
+    /* ── Pagination ── */
+    .pagination {
+      display:flex; align-items:center; gap:10px; justify-content:center;
+      padding:20px 0 4px; font-size:.85rem; color:var(--muted);
+    }
+
+    /* ── Status / material pills (same as dashboard) ── */
+    .pill {
+      display:inline-block; padding:2px 10px; border-radius:999px;
+      font-size:.72rem; font-weight:700; white-space:nowrap;
+    }
+    .mat-chip { display:inline-block; padding:2px 10px; border-radius:999px;
+                font-size:.72rem; font-weight:700; }
+    .mat-PLASTIC  { background:rgba(47,128,237,.14);  color:#1d4ed8; }
+    .mat-SAND     { background:rgba(217,164,59,.14);  color:#92400e; }
+    .mat-GRAVEL   { background:rgba(141,123,106,.14); color:#57534e; }
+    .mat-ROCK     { background:rgba(107,114,128,.14); color:#374151; }
+    .mat-WOOD     { background:rgba(160,100,58,.14);  color:#7c2d12; }
+    .mat-RUBBER   { background:rgba(124,92,255,.14);  color:#5b21b6; }
+    .mat-OTHER    { background:rgba(100,116,139,.14); color:#334155; }
+    .mat-UNKNOWN  { background:rgba(148,163,184,.14); color:#475569; }
+    .mat-Not\ identified { background:rgba(148,163,184,.14); color:#475569; }
+    @media (prefers-color-scheme:dark) {
+      .mat-PLASTIC { color:#93c5fd; } .mat-SAND   { color:#fde68a; }
+      .mat-GRAVEL  { color:#d6d3d1; } .mat-ROCK   { color:#d1d5db; }
+      .mat-WOOD    { color:#fdba74; } .mat-RUBBER { color:#c4b5fd; }
+      .mat-OTHER   { color:#cbd5e1; } .mat-UNKNOWN{ color:#94a3b8; }
+    }
+    .st-DETECTED        { background:rgba(100,116,139,.14); color:#475569; }
+    .st-ACKNOWLEDGED    { background:rgba(37,99,235,.13);   color:#1d4ed8; }
+    .st-IN_PROGRESS     { background:rgba(217,119,6,.13);   color:#92400e; }
+    .st-COMPLETED       { background:rgba(22,163,74,.13);   color:#15803d; }
+    .st-COULD_NOT_CLEAR { background:rgba(220,38,38,.13);   color:#991b1b; }
+    .st-FALSE_ALARM     { background:rgba(100,116,139,.13); color:#334155; }
+    @media (prefers-color-scheme:dark) {
+      .st-DETECTED        { color:#94a3b8; } .st-ACKNOWLEDGED { color:#93c5fd; }
+      .st-IN_PROGRESS     { color:#fcd34d; } .st-COMPLETED    { color:#6ee7b7; }
+      .st-COULD_NOT_CLEAR { color:#fca5a5; } .st-FALSE_ALARM  { color:#cbd5e1; }
+    }
+    .sev-BLOCKAGE { background:rgba(225,29,72,.13);  color:#9f1239; }
+    .sev-CRITICAL { background:rgba(220,38,38,.13);  color:#7f1d1d; }
+    .sensor-active  { background:rgba(217,119,6,.13);  color:#92400e; }
+    .sensor-cleared { background:rgba(22,163,74,.13);  color:#15803d; }
+  </style>
+</head>
+<body>
+
+<header class="page-header">
+  <div class="page-header-inner">
+    <h1>{% if region %}{{ region.name }} – {% endif %}Incident history</h1>
+    <div class="page-header-links">
+      <a href="/">Back to dashboard</a>
+      <a href="{{ url_for('change_password') }}">Change password</a>
+      <a href="{{ url_for('logout') }}">Logout</a>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+
+  {# ── Stats strip ── #}
+  <div class="stats-strip">
+    <div class="stat-item">
+      <span class="stat-label">Total</span>
+      <span class="stat-value">{{ stats.total }}</span>
+    </div>
+    <div class="stat-item">
+      <span class="stat-label">Open</span>
+      <span class="stat-value warn">{{ stats.open }}</span>
+    </div>
+    <div class="stat-item">
+      <span class="stat-label">Completed</span>
+      <span class="stat-value ok">{{ stats.completed }}</span>
+    </div>
+    <div class="stat-item">
+      <span class="stat-label">Avg. min to acknowledge</span>
+      <span class="stat-value">{{ stats.avg_minutes_to_acknowledge if stats.avg_minutes_to_acknowledge is not none else '—' }}</span>
+    </div>
+    <div class="stat-item">
+      <span class="stat-label">Avg. min to complete</span>
+      <span class="stat-value">{{ stats.avg_minutes_to_complete if stats.avg_minutes_to_complete is not none else '—' }}</span>
+    </div>
+    <div class="stat-item">
+      <span class="stat-label">Most common material</span>
+      <span class="stat-value" style="font-size:1rem">{{ stats.most_common_material or '—' }}</span>
+    </div>
+  </div>
+
+  {# ── Filters ── #}
+  <div class="panel">
+    <div class="panel-body">
+      <form method="get" action="/incidents" class="filter-form">
+        <div class="filter-group">
+          <label for="f-status">Status</label>
+          <select id="f-status" name="status">
+            <option value="">All statuses</option>
+            {% for s in all_statuses %}
+              <option value="{{ s }}" {% if filters.get('status') == s %}selected{% endif %}>{{ s.replace('_',' ').title() }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="filter-group">
+          <label for="f-material">Material</label>
+          <select id="f-material" name="material">
+            <option value="">All materials</option>
+            {% for m in all_materials %}
+              <option value="{{ m }}" {% if filters.get('material') == m %}selected{% endif %}>{{ m }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="filter-group">
+          <label for="f-from">From date</label>
+          <input type="date" id="f-from" name="date_from" value="{{ filters.get('date_from','') }}">
+        </div>
+        <div class="filter-group">
+          <label for="f-to">To date</label>
+          <input type="date" id="f-to" name="date_to" value="{{ filters.get('date_to','') }}">
+        </div>
+        <label class="filter-checkbox">
+          <input type="checkbox" name="needs_followup" value="1"
+                 {% if filters.get('needs_followup') == '1' %}checked{% endif %}>
+          Needs follow-up
+        </label>
+        <button type="submit" class="btn primary">Apply</button>
+        <a href="/incidents" class="btn">Reset</a>
+        <a href="/incidents.csv?{{ request.query_string.decode() }}" class="btn">Export CSV</a>
+      </form>
+    </div>
+  </div>
+
+  {# ── Table ── #}
+  <div class="panel">
+    {% if incidents %}
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Detected</th>
+            <th>Location</th>
+            <th>Material</th>
+            <th>Severity</th>
+            <th>Status</th>
+            <th>Sensors</th>
+            <th>Time to ack (min)</th>
+            <th>Time to complete (min)</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for inc in incidents %}
+          <tr>
+            <td>{{ inc.id }}</td>
+            <td>
+              {# JS will replace this with local time #}
+              <span class="ts" data-ts="{{ inc.detected_at or '' }}">
+                {{ inc.detected_at or '—' }}
+              </span>
+            </td>
+            <td>{{ inc.location }}</td>
+            <td>
+              <span class="mat-chip mat-{{ inc.material | replace(' ','\ ') }}">
+                {{ inc.material }}
+              </span>
+            </td>
+            <td>
+              <span class="pill sev-{{ inc.severity }}">{{ inc.severity }}</span>
+            </td>
+            <td>
+              <span class="pill st-{{ inc.status }}">
+                {{ inc.status.replace('_',' ').title() }}
+              </span>
+            </td>
+            <td>
+              <span class="pill {% if inc.sensor_state == 'ACTIVE' %}sensor-active{% else %}sensor-cleared{% endif %}">
+                {{ inc.sensor_state.title() }}
+              </span>
+            </td>
+            <td class="ts-ack" data-detected="{{ inc.detected_at or '' }}" data-inc="{{ inc.id }}">—</td>
+            <td class="ts-comp" data-detected="{{ inc.detected_at or '' }}" data-inc="{{ inc.id }}">—</td>
+            <td>
+              <a href="/incidents/{{ inc.id }}" class="btn sm">View</a>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="empty-state">
+      <div class="empty-state-icon">📋</div>
+      <div>No incidents found{% if filters %} for the current filters{% endif %}.</div>
+      {% if filters %}<div style="margin-top:8px"><a href="/incidents" style="color:var(--water)">Clear filters</a></div>{% endif %}
+    </div>
+    {% endif %}
+  </div>
+
+  {# ── Pagination ── #}
+  {% if pages > 1 %}
+  <div class="pagination">
+    {% if page > 1 %}
+      <a href="/incidents?{{ prev_qs }}" class="btn sm">← Previous</a>
+    {% else %}
+      <span class="btn sm" style="opacity:.4;cursor:default">← Previous</span>
+    {% endif %}
+    <span>Page {{ page }} of {{ pages }}</span>
+    {% if page < pages %}
+      <a href="/incidents?{{ next_qs }}" class="btn sm">Next →</a>
+    {% else %}
+      <span class="btn sm" style="opacity:.4;cursor:default">Next →</span>
+    {% endif %}
+  </div>
+  {% endif %}
+
+</div>{# /.wrap #}
+
+<script>
+/* Format epoch seconds as local date-time for every .ts element */
+(function() {
+  /* Incidents table: detected column */
+  document.querySelectorAll("span.ts[data-ts]").forEach(function(el) {
+    var ts = parseFloat(el.getAttribute("data-ts"));
+    if (!ts) return;
+    el.textContent = new Date(ts * 1000).toLocaleString([], {
+      year:"numeric", month:"short", day:"numeric",
+      hour:"2-digit", minute:"2-digit"
+    });
+  });
+
+  /* Time-to-ack and time-to-complete require action data we don't have
+     on the list page — leave them as "—" unless the backend sends them.
+     They are computed on the detail page instead. */
+})();
+</script>
+</body>
+</html>

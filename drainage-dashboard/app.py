@@ -1627,6 +1627,289 @@ def api_incident_notes(incident_id):
     return jsonify({"ok": True})
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Incident history pages (Phase 3C)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _incidents_region_or_redirect():
+    """
+    Return (user, region) for the history pages.
+    Admin without a region selected is redirected to /admin.
+    Returns (None, response) when a redirect is needed.
+    """
+    user   = _current_user()
+    region = _region_for_session(user)
+    if region is None:
+        return None, redirect(url_for("admin"))
+    return user, region
+
+
+def _build_incident_query(region, request_args):
+    """
+    Apply the filter params from request_args to an Incident query for region.
+    Returns (query, applied_filters_dict).
+    """
+    _CLOSED = {"COMPLETED", "FALSE_ALARM", "COULD_NOT_CLEAR"}
+    q = Incident.query.filter_by(region_id=region.id)
+
+    filters = {}
+
+    status_f = request_args.get("status", "").strip()
+    if status_f:
+        q = q.filter(Incident.status == status_f)
+        filters["status"] = status_f
+
+    material_f = request_args.get("material", "").strip()
+    if material_f:
+        q = q.filter(Incident.material == material_f)
+        filters["material"] = material_f
+
+    date_from = request_args.get("date_from", "").strip()
+    if date_from:
+        try:
+            ts_from = datetime.strptime(date_from, "%Y-%m-%d").replace(
+                tzinfo=timezone.utc).timestamp()
+            q = q.filter(Incident.detected_at >= ts_from)
+            filters["date_from"] = date_from
+        except ValueError:
+            pass
+
+    date_to = request_args.get("date_to", "").strip()
+    if date_to:
+        try:
+            ts_to = datetime.strptime(date_to, "%Y-%m-%d").replace(
+                tzinfo=timezone.utc).timestamp() + 86400
+            q = q.filter(Incident.detected_at < ts_to)
+            filters["date_to"] = date_to
+        except ValueError:
+            pass
+
+    if request_args.get("needs_followup", "") == "1":
+        q = q.filter(
+            Incident.sensor_state == "CLEARED",
+            Incident.status.notin_(_CLOSED),
+        )
+        filters["needs_followup"] = "1"
+
+    return q, filters
+
+
+def _incident_stats(rows):
+    """Compute summary statistics over a list of Incident rows."""
+    _CLOSED = {"COMPLETED", "FALSE_ALARM", "COULD_NOT_CLEAR"}
+    total     = len(rows)
+    open_c    = sum(1 for r in rows if r.status not in _CLOSED)
+    completed = sum(1 for r in rows if r.status == "COMPLETED")
+
+    inc_ids = [r.id for r in rows]
+    avg_ack = avg_comp = None
+    most_common = None
+
+    if inc_ids:
+        all_act = (IncidentAction.query
+                   .filter(
+                       IncidentAction.incident_id.in_(inc_ids),
+                       IncidentAction.action_type == "STATUS",
+                   )
+                   .order_by(IncidentAction.incident_id,
+                              IncidentAction.created_at)
+                   .all())
+        first_ack  = {}
+        first_comp = {}
+        for a in all_act:
+            if a.to_status in ("ACKNOWLEDGED", "IN_PROGRESS") \
+                    and a.incident_id not in first_ack:
+                first_ack[a.incident_id] = a.created_at
+            if a.to_status == "COMPLETED" \
+                    and a.incident_id not in first_comp:
+                first_comp[a.incident_id] = a.created_at
+
+        idict = {r.id: r for r in rows}
+        ack_times  = [(first_ack[i] - idict[i].detected_at) / 60
+                      for i in first_ack if idict[i].detected_at]
+        comp_times = [(first_comp[i] - idict[i].detected_at) / 60
+                      for i in first_comp if idict[i].detected_at]
+        if ack_times:
+            avg_ack  = round(sum(ack_times)  / len(ack_times),  1)
+        if comp_times:
+            avg_comp = round(sum(comp_times) / len(comp_times), 1)
+
+        mat_counts = {}
+        for r in rows:
+            mat_counts[r.material] = mat_counts.get(r.material, 0) + 1
+        most_common = max(mat_counts, key=mat_counts.get) if mat_counts else None
+
+    return {
+        "total":     total,
+        "open":      open_c,
+        "completed": completed,
+        "avg_minutes_to_acknowledge": avg_ack,
+        "avg_minutes_to_complete":    avg_comp,
+        "most_common_material":       most_common,
+    }
+
+
+def _csv_safe(value):
+    """Prefix a cell with a single quote if it could be interpreted as a formula."""
+    s = str(value) if value is not None else ""
+    if s and s[0] in ("=", "+", "-", "@"):
+        return "'" + s
+    return s
+
+
+@app.route("/incidents")
+@login_required
+def incident_list():
+    """Paginated, filtered incident history page."""
+    user, region_or_redirect = _incidents_region_or_redirect()
+    if user is None:
+        return region_or_redirect
+
+    q, filters = _build_incident_query(region_or_redirect, request.args)
+    all_rows   = q.order_by(Incident.id.desc()).all()
+    stats      = _incident_stats(all_rows)
+
+    per_page = 20
+    page     = max(1, request.args.get("page", 1, type=int))
+    total    = len(all_rows)
+    pages    = max(1, (total + per_page - 1) // per_page) if total else 1
+    page     = min(page, pages)
+    start    = (page - 1) * per_page
+    paged    = all_rows[start: start + per_page]
+
+    # Compute allowed_next for each visible incident (needed for action buttons)
+    for inc in paged:
+        inc._computed = _incident_computed(inc)
+
+    # Build pagination query strings
+    from urllib.parse import urlencode as _urlencode
+    base_args = {k: v for k, v in request.args.items() if k != "page"}
+    prev_qs = _urlencode({**base_args, "page": page - 1})
+    next_qs = _urlencode({**base_args, "page": page + 1})
+
+    return render_template(
+        "incidents.html",
+        user=user,
+        region=region_or_redirect,
+        incidents=paged,
+        stats=stats,
+        filters=filters,
+        page=page,
+        pages=pages,
+        total=total,
+        all_statuses=list(ALLOWED_MOVES.keys()) + ["COMPLETED", "COULD_NOT_CLEAR", "FALSE_ALARM"],
+        all_materials=list(MATERIALS),
+        csrf_token=_csrf_token(),
+        prev_qs=prev_qs,
+        next_qs=next_qs,
+    )
+
+
+@app.route("/incidents/<int:incident_id>")
+@login_required
+def incident_detail(incident_id):
+    """Full incident detail page."""
+    import json as _json
+
+    user, region_or_redirect = _incidents_region_or_redirect()
+    if user is None:
+        return region_or_redirect
+    region = region_or_redirect
+
+    inc, err = _get_incident_for_region(incident_id, region)
+    if err:
+        return err   # 404
+
+    actions = (IncidentAction.query
+               .filter_by(incident_id=inc.id)
+               .order_by(IncidentAction.created_at)
+               .all())
+
+    plan_obj = snapshot_obj = None
+    try:
+        plan_obj = _json.loads(inc.plan) if inc.plan else None
+    except Exception:
+        pass
+    try:
+        snapshot_obj = _json.loads(inc.snapshot) if inc.snapshot else None
+    except Exception:
+        pass
+
+    computed = _incident_computed(inc)
+
+    return render_template(
+        "incident_detail.html",
+        user=user,
+        region=region,
+        incident=inc,
+        computed=computed,
+        plan=plan_obj,
+        snapshot=snapshot_obj,
+        actions=actions,
+        all_statuses=list(ALLOWED_MOVES.keys()) + ["COMPLETED", "COULD_NOT_CLEAR", "FALSE_ALARM"],
+        all_materials=list(MATERIALS),
+        note_required_for=list(_NOTE_REQUIRED_FOR),
+        csrf_token=_csrf_token(),
+    )
+
+
+@app.route("/incidents.csv")
+@login_required
+def incident_csv():
+    """Download filtered incidents as CSV."""
+    import csv
+    import io
+    from datetime import date as _date
+
+    user, region_or_redirect = _incidents_region_or_redirect()
+    if user is None:
+        return region_or_redirect
+    region = region_or_redirect
+
+    q, _ = _build_incident_query(region, request.args)
+    rows  = q.order_by(Incident.id.desc()).all()
+
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow([
+        "ID", "Detected (UTC)", "Location", "Severity", "Status",
+        "Sensor state", "Material", "Confidence",
+        "Confirmed", "Peak depth B (cm)", "Min flow (L/min)",
+        "Cleared (UTC)",
+    ])
+    for r in rows:
+        def _fmt_ts(ts):
+            if ts is None:
+                return ""
+            return datetime.utcfromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")
+
+        writer.writerow([
+            _csv_safe(r.id),
+            _csv_safe(_fmt_ts(r.detected_at)),
+            _csv_safe(r.location),
+            _csv_safe(r.severity),
+            _csv_safe(r.status),
+            _csv_safe(r.sensor_state),
+            _csv_safe(r.material),
+            _csv_safe(round(r.material_confidence, 2) if r.material_confidence else ""),
+            _csv_safe(r.confirmed),
+            _csv_safe(round(r.peak_depth_b, 2) if r.peak_depth_b else ""),
+            _csv_safe(round(r.min_flow, 2) if r.min_flow else ""),
+            _csv_safe(_fmt_ts(r.cleared_at)),
+        ])
+
+    today = _date.today().strftime("%Y-%m-%d")
+    filename = "incidents-{}-{}.csv".format(region.code, today)
+    buf.seek(0)
+
+    from flask import Response
+    return Response(
+        buf.getvalue(),
+        mimetype="text/csv",
+        headers={"Content-Disposition": "attachment; filename={}".format(filename)},
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Dashboard page
 # ─────────────────────────────────────────────────────────────────────────────
 

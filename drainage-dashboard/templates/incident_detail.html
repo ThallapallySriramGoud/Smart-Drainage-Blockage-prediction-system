@@ -1,0 +1,639 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="csrf-token" content="{{ csrf_token }}">
+  <title>Incident #{{ incident.id }} – Smart Drainage</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Sora:wght@700&family=Public+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg:#f4f8fc; --card:#ffffff; --text:#0f2342;
+      --muted:#5a6f8c; --border:#dbe6f3; --water:#2563eb;
+      --normal:#16a34a; --warning:#d97706; --blockage:#e11d48; --critical:#dc2626;
+      --shadow:0 10px 30px rgba(30,64,120,.10);
+      --shadow-sm:0 4px 14px rgba(30,64,120,.07);
+      --r:18px;
+      --font-head:'Sora','Segoe UI',system-ui,sans-serif;
+      --font-body:'Public Sans','Segoe UI',system-ui,sans-serif;
+    }
+    @media (prefers-color-scheme:dark) {
+      :root {
+        --bg:#0b1220; --card:#131c2e; --text:#e6edf7;
+        --muted:#93a4bd; --border:#25324a;
+        --shadow:0 10px 30px rgba(0,0,0,.35);
+        --shadow-sm:0 4px 14px rgba(0,0,0,.25);
+      }
+    }
+    *,*::before,*::after { margin:0; padding:0; box-sizing:border-box; }
+    html { scroll-behavior:smooth; }
+    body {
+      font-family:var(--font-body); font-weight:400;
+      background:var(--bg); color:var(--text); min-height:100vh; line-height:1.5;
+    }
+    :focus-visible { outline:3px solid var(--water); outline-offset:3px; border-radius:4px; }
+
+    /* header */
+    .page-header {
+      background: radial-gradient(900px 400px at 85% -10%,rgba(96,165,250,.25),transparent 60%),
+                  linear-gradient(160deg,#ffffff 0%,#e8f3ff 60%,#cfe6ff 100%);
+      border-bottom:1.5px solid var(--border); padding:0 24px;
+      box-shadow:var(--shadow-sm);
+    }
+    @media (prefers-color-scheme:dark) {
+      .page-header { background:linear-gradient(160deg,#0b1220 0%,#16243f 100%); }
+    }
+    .page-header-inner {
+      max-width:1180px; margin:0 auto; height:60px;
+      display:flex; align-items:center; justify-content:space-between; gap:16px;
+    }
+    .page-header h1 { font-family:var(--font-head); font-size:1.1rem; font-weight:700; color:var(--text); }
+    .page-header-links { display:flex; align-items:center; gap:14px; flex-shrink:0; flex-wrap:wrap; }
+    .page-header-links a { font-size:.8rem; color:var(--muted); text-decoration:none; white-space:nowrap; }
+    .page-header-links a:hover { color:var(--water); }
+
+    /* layout */
+    .wrap { max-width:1180px; margin:0 auto; padding:28px 24px 48px; }
+    @media (max-width:480px) { .wrap { padding:20px 14px 40px; } }
+
+    /* panel */
+    .panel {
+      background:var(--card); border:1.5px solid var(--border);
+      border-radius:var(--r); box-shadow:var(--shadow-sm); margin-bottom:20px;
+    }
+    .panel-body { padding:20px 22px; }
+    .panel-title {
+      font-family:var(--font-head); font-size:.85rem; font-weight:700;
+      color:var(--muted); margin-bottom:14px; letter-spacing:.03em; text-transform:uppercase;
+    }
+
+    /* summary grid */
+    .summary-grid {
+      display:grid; grid-template-columns:repeat(auto-fill,minmax(160px,1fr)); gap:12px;
+    }
+    .summary-item { display:flex; flex-direction:column; gap:3px; }
+    .s-label { font-size:.72rem; font-weight:600; color:var(--muted); }
+    .s-value { font-size:.95rem; font-weight:600; color:var(--text); }
+
+    /* pills */
+    .pill {
+      display:inline-block; padding:2px 10px; border-radius:999px;
+      font-size:.72rem; font-weight:700; white-space:nowrap;
+    }
+    .mat-chip { display:inline-block; padding:2px 10px; border-radius:999px; font-size:.72rem; font-weight:700; }
+    .mat-PLASTIC  { background:rgba(47,128,237,.14);  color:#1d4ed8; }
+    .mat-SAND     { background:rgba(217,164,59,.14);  color:#92400e; }
+    .mat-GRAVEL   { background:rgba(141,123,106,.14); color:#57534e; }
+    .mat-ROCK     { background:rgba(107,114,128,.14); color:#374151; }
+    .mat-WOOD     { background:rgba(160,100,58,.14);  color:#7c2d12; }
+    .mat-RUBBER   { background:rgba(124,92,255,.14);  color:#5b21b6; }
+    .mat-OTHER    { background:rgba(100,116,139,.14); color:#334155; }
+    .mat-UNKNOWN  { background:rgba(148,163,184,.14); color:#475569; }
+    @media (prefers-color-scheme:dark) {
+      .mat-PLASTIC { color:#93c5fd; } .mat-SAND   { color:#fde68a; }
+      .mat-GRAVEL  { color:#d6d3d1; } .mat-ROCK   { color:#d1d5db; }
+      .mat-WOOD    { color:#fdba74; } .mat-RUBBER { color:#c4b5fd; }
+      .mat-OTHER   { color:#cbd5e1; } .mat-UNKNOWN{ color:#94a3b8; }
+    }
+    .st-DETECTED        { background:rgba(100,116,139,.14); color:#475569; }
+    .st-ACKNOWLEDGED    { background:rgba(37,99,235,.13);   color:#1d4ed8; }
+    .st-IN_PROGRESS     { background:rgba(217,119,6,.13);   color:#92400e; }
+    .st-COMPLETED       { background:rgba(22,163,74,.13);   color:#15803d; }
+    .st-COULD_NOT_CLEAR { background:rgba(220,38,38,.13);   color:#991b1b; }
+    .st-FALSE_ALARM     { background:rgba(100,116,139,.13); color:#334155; }
+    .sev-BLOCKAGE { background:rgba(225,29,72,.13);  color:#9f1239; }
+    .sev-CRITICAL { background:rgba(220,38,38,.13);  color:#7f1d1d; }
+    .sensor-active  { background:rgba(217,119,6,.13);  color:#92400e; }
+    .sensor-cleared { background:rgba(22,163,74,.13);  color:#15803d; }
+    @media (prefers-color-scheme:dark) {
+      .st-DETECTED        { color:#94a3b8; } .st-ACKNOWLEDGED { color:#93c5fd; }
+      .st-IN_PROGRESS     { color:#fcd34d; } .st-COMPLETED    { color:#6ee7b7; }
+      .st-COULD_NOT_CLEAR { color:#fca5a5; } .st-FALSE_ALARM  { color:#cbd5e1; }
+    }
+
+    /* plan cards */
+    .plan-steps { list-style:none; padding:0; display:flex; flex-direction:column; gap:8px; }
+    .plan-step  { display:flex; gap:10px; align-items:flex-start; font-size:.9rem; }
+    .step-num {
+      flex-shrink:0; width:22px; height:22px; border-radius:50%;
+      background:#eff6ff; border:1.5px solid #bfdbfe;
+      display:flex; align-items:center; justify-content:center;
+      font-size:.7rem; font-weight:700; color:var(--water); margin-top:1px;
+    }
+    @media (prefers-color-scheme:dark) {
+      .step-num { background:rgba(37,99,235,.18); border-color:rgba(37,99,235,.4); }
+    }
+    .tool-chips { display:flex; flex-wrap:wrap; gap:7px; margin-top:12px; }
+    .tool-chip {
+      padding:3px 11px; border:1.5px solid var(--border); border-radius:999px;
+      font-size:.78rem; color:var(--muted); background:var(--bg);
+    }
+    .safety-box {
+      background:rgba(217,119,6,.07); border:1px solid rgba(217,119,6,.22);
+      border-radius:10px; padding:12px 14px; margin-top:14px;
+    }
+    .safety-title { font-size:.78rem; font-weight:700; color:var(--warning); margin-bottom:6px; }
+    .safety-box ul { list-style:disc; padding-left:18px; display:flex; flex-direction:column; gap:3px; }
+    .safety-box li { font-size:.82rem; color:var(--muted); }
+
+    /* snapshot / tables */
+    .table-scroll { overflow-x:auto; -webkit-overflow-scrolling:touch; }
+    table { width:100%; border-collapse:collapse; min-width:460px; }
+    thead tr { border-bottom:1.5px solid var(--border); }
+    th {
+      text-align:left; padding:7px 10px 10px;
+      font-size:.72rem; font-weight:600; color:var(--muted);
+      text-transform:uppercase; letter-spacing:.05em; white-space:nowrap;
+    }
+    td {
+      text-align:left; padding:9px 10px; font-size:.85rem;
+      border-bottom:1px solid var(--border); vertical-align:middle; color:var(--text);
+    }
+    tbody tr:nth-child(even) { background:rgba(37,99,235,.025); }
+
+    /* timeline */
+    .timeline { display:flex; flex-direction:column; gap:14px; margin-top:4px; }
+    .tl-item { display:flex; gap:12px; align-items:flex-start; }
+    .tl-dot {
+      flex-shrink:0; width:12px; height:12px; border-radius:50%; margin-top:3px;
+    }
+    .tl-dot.system { background:var(--muted); }
+    .tl-dot.status { background:var(--water); }
+    .tl-dot.note   { background:var(--warning); }
+    .tl-body { flex:1; min-width:0; }
+    .tl-type {
+      display:inline-block; padding:1px 8px; border-radius:999px;
+      font-size:.68rem; font-weight:700; margin-right:6px; vertical-align:middle;
+    }
+    .tl-type-SYSTEM { background:rgba(90,111,140,.12); color:var(--muted); }
+    .tl-type-STATUS { background:rgba(37,99,235,.12);  color:var(--water); }
+    .tl-type-NOTE   { background:rgba(217,119,6,.12);  color:var(--warning); }
+    .tl-text { font-size:.88rem; color:var(--text); line-height:1.45; }
+    .tl-meta { font-size:.75rem; color:var(--muted); margin-top:3px; }
+    .tl-extras {
+      display:flex; flex-wrap:wrap; gap:8px; margin-top:5px;
+    }
+    .tl-extra-chip {
+      padding:2px 8px; border:1px solid var(--border); border-radius:999px;
+      font-size:.72rem; color:var(--muted); background:var(--bg);
+    }
+
+    /* action UI (same pattern as dashboard) */
+    .actions-row { display:flex; flex-wrap:wrap; gap:8px; margin-top:20px; }
+    .btn {
+      padding:8px 18px; border-radius:8px; font-family:var(--font-body);
+      font-size:.85rem; font-weight:600; cursor:pointer;
+      border:1.5px solid var(--border); background:var(--card); color:var(--text);
+      transition:background .15s, border-color .15s; white-space:nowrap;
+      text-decoration:none; display:inline-block; line-height:1.4;
+    }
+    .btn:hover { background:#eff6ff; border-color:var(--water); }
+    .btn.primary { background:var(--water); border-color:var(--water); color:#fff; }
+    .btn.primary:hover { background:#1d4ed8; border-color:#1d4ed8; }
+    .btn:disabled { opacity:.5; cursor:not-allowed; }
+    @media (prefers-color-scheme:dark) { .btn:hover { background:rgba(37,99,235,.15); border-color:var(--water); } }
+
+    .action-form {
+      margin-top:16px; padding:16px; background:var(--bg);
+      border:1.5px solid var(--border); border-radius:12px;
+    }
+    .action-form-title { font-weight:700; font-size:.9rem; margin-bottom:12px; color:var(--text); }
+    .field { margin-bottom:12px; }
+    .field label { display:block; font-size:.78rem; font-weight:600; color:var(--muted); margin-bottom:4px; }
+    .field textarea,
+    .field input[type="text"],
+    .field input[type="number"],
+    .field select {
+      width:100%; padding:8px 11px; border:1.5px solid var(--border);
+      border-radius:8px; background:var(--card); color:var(--text);
+      font-family:var(--font-body); font-size:.88rem; outline:none;
+      transition:border-color .2s;
+    }
+    .field textarea { resize:vertical; min-height:72px; }
+    .field textarea:focus,
+    .field input:focus,
+    .field select:focus { border-color:var(--water); }
+    .form-error { font-size:.8rem; color:var(--critical); margin-top:8px; font-weight:600; }
+    .form-row { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+    @media (max-width:480px) { .form-row { grid-template-columns:1fr; } }
+
+    .note-row { display:flex; gap:8px; margin-top:16px; align-items:flex-start; }
+    .note-row input[type="text"] {
+      flex:1; padding:8px 11px; border:1.5px solid var(--border); border-radius:8px;
+      background:var(--card); color:var(--text); font-family:var(--font-body); font-size:.88rem; outline:none;
+    }
+    .note-row input:focus { border-color:var(--water); }
+
+    /* plan footer */
+    .plan-footer {
+      display:flex; gap:20px; flex-wrap:wrap; font-size:.82rem; color:var(--muted);
+      border-top:1px solid var(--border); padding-top:12px; margin-top:14px;
+    }
+    .plan-footer strong { color:var(--text); }
+
+    /* breadcrumb */
+    .breadcrumb { font-size:.82rem; color:var(--muted); margin-bottom:18px; }
+    .breadcrumb a { color:var(--water); text-decoration:none; }
+    .breadcrumb a:hover { text-decoration:underline; }
+  </style>
+</head>
+<body>
+
+<header class="page-header">
+  <div class="page-header-inner">
+    <h1>Incident #{{ incident.id }}</h1>
+    <div class="page-header-links">
+      <a href="/incidents">← History</a>
+      <a href="/">Dashboard</a>
+      <a href="{{ url_for('change_password') }}">Change password</a>
+      <a href="{{ url_for('logout') }}">Logout</a>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+  <div class="breadcrumb">
+    <a href="/incidents">Incident history</a> › Incident #{{ incident.id }}
+  </div>
+
+  {# ── Summary card ── #}
+  <div class="panel">
+    <div class="panel-body">
+      <div class="panel-title">Summary</div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px;align-items:center;">
+        <span class="pill st-{{ incident.status }}">{{ incident.status.replace('_',' ').title() }}</span>
+        <span class="pill sev-{{ incident.severity }}">{{ incident.severity }}</span>
+        <span class="pill {% if incident.sensor_state == 'ACTIVE' %}sensor-active{% else %}sensor-cleared{% endif %}">
+          Sensors: {{ incident.sensor_state.title() }}
+        </span>
+        {% if computed.verified %}
+          <span class="pill" style="background:rgba(22,163,74,.15);color:var(--normal)">✓ Verified by sensors</span>
+        {% endif %}
+        {% if computed.needs_followup %}
+          <span class="pill" style="background:rgba(217,119,6,.14);color:var(--warning)">Follow-up needed</span>
+        {% endif %}
+        {% if computed.still_blocked %}
+          <span class="pill" style="background:rgba(220,38,38,.14);color:var(--critical)">Still blocked</span>
+        {% endif %}
+      </div>
+      <div class="summary-grid">
+        <div class="summary-item">
+          <span class="s-label">Location</span>
+          <span class="s-value">{{ incident.location }}</span>
+        </div>
+        <div class="summary-item">
+          <span class="s-label">Material</span>
+          <span class="s-value">
+            <span class="mat-chip mat-{{ incident.material }}">{{ incident.material }}</span>
+            {% if incident.material_confidence %}
+              <span style="color:var(--muted);font-size:.78rem"> {{ (incident.material_confidence * 100) | int }}%</span>
+            {% endif %}
+          </span>
+        </div>
+        <div class="summary-item">
+          <span class="s-label">Confirmed by sensors</span>
+          <span class="s-value">{{ 'Yes' if incident.confirmed else 'No' }}</span>
+        </div>
+        <div class="summary-item">
+          <span class="s-label">Detected</span>
+          <span class="s-value">
+            <span class="ts" data-ts="{{ incident.detected_at or '' }}">{{ incident.detected_at or '—' }}</span>
+          </span>
+        </div>
+        <div class="summary-item">
+          <span class="s-label">Cleared</span>
+          <span class="s-value">
+            {% if incident.cleared_at %}
+              <span class="ts" data-ts="{{ incident.cleared_at }}">{{ incident.cleared_at }}</span>
+            {% else %}—{% endif %}
+          </span>
+        </div>
+        {% if incident.peak_depth_b is not none %}
+        <div class="summary-item">
+          <span class="s-label">Peak depth B</span>
+          <span class="s-value">{{ incident.peak_depth_b | round(2) }} cm</span>
+        </div>
+        {% endif %}
+        {% if incident.min_flow is not none %}
+        <div class="summary-item">
+          <span class="s-label">Min flow</span>
+          <span class="s-value">{{ incident.min_flow | round(2) }} L/min</span>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  {# ── Plan card ── #}
+  {% if plan %}
+  <div class="panel">
+    <div class="panel-body">
+      <div class="panel-title">Plan that was given</div>
+      <div style="display:flex;gap:10px;align-items:center;margin-bottom:12px;flex-wrap:wrap;">
+        <strong>{{ plan.title }}</strong>
+        <span class="pill {% if plan.urgency == 'URGENT' %}sev-CRITICAL{% else %}sensor-cleared{% endif %}">
+          {{ plan.urgency }}
+        </span>
+      </div>
+      <p style="font-size:.92rem;color:var(--muted);margin-bottom:14px">{{ plan.summary }}</p>
+      <ol class="plan-steps">
+        {% for step in plan.steps %}
+        <li class="plan-step">
+          <span class="step-num">{{ loop.index }}</span>
+          <span>{{ step }}</span>
+        </li>
+        {% endfor %}
+      </ol>
+      {% if plan.tools %}
+      <div class="tool-chips">
+        {% for t in plan.tools %}
+          <span class="tool-chip">{{ t }}</span>
+        {% endfor %}
+      </div>
+      {% endif %}
+      {% if plan.safety %}
+      <div class="safety-box">
+        <div class="safety-title">Safety reminders</div>
+        <ul>
+          {% for s in plan.safety %}
+            <li>{{ s }}</li>
+          {% endfor %}
+        </ul>
+      </div>
+      {% endif %}
+      <div class="plan-footer">
+        <div><strong>Crew:</strong> {{ plan.crew }}</div>
+        <div><strong>Est. time:</strong> {{ plan.est_time_min }} min</div>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  {# ── Readings at detection (snapshot) ── #}
+  {% if snapshot %}
+  <div class="panel">
+    <div class="panel-body">
+      <div class="panel-title">Readings at detection (last {{ snapshot | length }})</div>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>Depth A (cm)</th>
+              <th>Depth B (cm)</th>
+              <th>Depth C (cm)</th>
+              <th>Flow (L/min)</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in snapshot %}
+            <tr>
+              <td><span class="ts" data-ts="{{ row.ts }}">{{ row.ts }}</span></td>
+              <td>{{ row.depth_a | round(2) }}</td>
+              <td>{{ row.depth_b | round(2) }}</td>
+              <td>{{ row.depth_c | round(2) }}</td>
+              <td>{{ row.flow | round(2) }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  {# ── Action buttons (only for open incidents) ── #}
+  {% if computed.allowed_next %}
+  <div class="panel" id="action-panel">
+    <div class="panel-body">
+      <div class="panel-title">Update status</div>
+      <div class="actions-row" id="actions-row">
+        {# Rendered by JS using computed.allowed_next passed as data attribute #}
+      </div>
+      <div class="action-form" id="action-form" style="display:none">
+        <div class="action-form-title" id="action-form-title"></div>
+        <div class="field" id="field-note">
+          <label for="note-input">What was done <span id="note-required" style="color:var(--critical)">*</span></label>
+          <textarea id="note-input" maxlength="1000" rows="3" placeholder="Describe what was done…"></textarea>
+        </div>
+        <div class="form-row">
+          <div class="field" id="field-tools">
+            <label for="tools-input">Tools used</label>
+            <input type="text" id="tools-input" maxlength="200" placeholder="e.g. grab tool, drain rods">
+          </div>
+          <div class="field" id="field-crew">
+            <label for="crew-input">Crew size</label>
+            <input type="number" id="crew-input" min="1" max="50" placeholder="2">
+          </div>
+        </div>
+        <div class="field" id="field-material">
+          <label for="material-select">Material actually found</label>
+          <select id="material-select">
+            <option value="">— same as detected —</option>
+            {% for m in all_materials %}
+              <option value="{{ m }}" {% if m == incident.material %}selected{% endif %}>{{ m }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="form-error" id="form-error" style="display:none"></div>
+        <div class="actions-row" style="margin-top:12px">
+          <button class="btn primary" id="form-submit">Submit</button>
+          <button class="btn" id="form-cancel">Cancel</button>
+        </div>
+      </div>
+      <!-- Add note box -->
+      <div class="note-row">
+        <input type="text" id="quick-note" maxlength="1000" placeholder="Add a note…">
+        <button class="btn" id="quick-note-btn">Add note</button>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  {# ── Full timeline ── #}
+  <div class="panel">
+    <div class="panel-body">
+      <div class="panel-title">Full action history ({{ actions | length }})</div>
+      {% if actions %}
+      <div class="timeline">
+        {% for a in actions %}
+        <div class="tl-item">
+          <div class="tl-dot {{ a.action_type | lower }}"></div>
+          <div class="tl-body">
+            <div class="tl-text">
+              <span class="tl-type tl-type-{{ a.action_type }}">{{ a.action_type }}</span>
+              {% if a.action_type == 'STATUS' and a.from_status and a.to_status %}
+                {{ a.from_status.replace('_',' ').title() }} → {{ a.to_status.replace('_',' ').title() }}
+                {% if a.note %}: {{ a.note }}{% endif %}
+              {% elif a.note %}
+                {{ a.note }}
+              {% else %}
+                {{ a.action_type }}
+              {% endif %}
+            </div>
+            {% if a.tools_used or a.crew_size or a.actual_material %}
+            <div class="tl-extras">
+              {% if a.tools_used %}
+                <span class="tl-extra-chip">🔧 {{ a.tools_used }}</span>
+              {% endif %}
+              {% if a.crew_size %}
+                <span class="tl-extra-chip">👥 {{ a.crew_size }} crew</span>
+              {% endif %}
+              {% if a.actual_material %}
+                <span class="tl-extra-chip mat-chip mat-{{ a.actual_material }}">{{ a.actual_material }}</span>
+              {% endif %}
+            </div>
+            {% endif %}
+            <div class="tl-meta">
+              {{ a.user_login }}
+              <span class="ts" data-ts="{{ a.created_at }}"> · {{ a.created_at }}</span>
+            </div>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+      {% else %}
+        <p style="color:var(--muted);font-size:.88rem">No actions recorded yet.</p>
+      {% endif %}
+    </div>
+  </div>
+
+</div>{# /.wrap #}
+
+<script>
+/* ── Format all .ts elements (epoch seconds → local date-time) ── */
+document.querySelectorAll(".ts[data-ts]").forEach(function(el) {
+  var ts = parseFloat(el.getAttribute("data-ts"));
+  if (!ts) return;
+  el.textContent = new Date(ts * 1000).toLocaleString([], {
+    year:"numeric", month:"short", day:"numeric", hour:"2-digit", minute:"2-digit"
+  });
+});
+
+/* ── Incident action UI (mirrors the dashboard pattern) ── */
+var INC_ID = {{ incident.id }};
+var ALLOWED_NEXT = {{ computed.allowed_next | tojson }};
+var CURRENT_STATUS = {{ incident.status | tojson }};
+var NOTE_REQUIRED_FOR = {{ note_required_for | tojson }};
+var CURRENT_MATERIAL = {{ incident.material | tojson }};
+var CSRF_TOKEN = (document.querySelector('meta[name="csrf-token"]') || {}).content || "";
+
+var INC_ACTIONS = {
+  "ACKNOWLEDGED":    { label:"Acknowledge",      needsNote:false, showMat:false, showTools:false, showCrew:false },
+  "IN_PROGRESS":     { label:"Start work",        needsNote:false, showMat:true,  showTools:true,  showCrew:true  },
+  "COMPLETED":       { label:"Mark completed",    needsNote:true,  showMat:true,  showTools:true,  showCrew:true  },
+  "COULD_NOT_CLEAR": { label:"Could not clear",   needsNote:true,  showMat:false, showTools:false, showCrew:false },
+  "FALSE_ALARM":     { label:"False alarm",        needsNote:true,  showMat:false, showTools:false, showCrew:false },
+  "IN_PROGRESS_reopen":{ label:"Reopen",          needsNote:true,  showMat:false, showTools:false, showCrew:false }
+};
+var INC_STATUS_LABEL = {
+  "DETECTED":"Detected","ACKNOWLEDGED":"Acknowledged","IN_PROGRESS":"In progress",
+  "COMPLETED":"Completed","COULD_NOT_CLEAR":"Could not clear","FALSE_ALARM":"False alarm"
+};
+
+var _pendingStatus = null;
+var actionsRow = document.getElementById("actions-row");
+
+function _incPost(url, body) {
+  return fetch(url, {
+    method:"POST",
+    headers:{"Content-Type":"application/json","X-CSRF-Token":CSRF_TOKEN},
+    body:JSON.stringify(body)
+  }).then(function(r) {
+    if (r.status === 401) { window.location.href = "/login"; return Promise.reject("unauthorized"); }
+    return r.json().then(function(d) {
+      if (!r.ok) return Promise.reject(d.error || "Server error");
+      return d;
+    });
+  });
+}
+
+if (actionsRow) {
+  ALLOWED_NEXT.forEach(function(targetStatus) {
+    var cfgKey = (targetStatus === "IN_PROGRESS" && CURRENT_STATUS === "COMPLETED")
+                 ? "IN_PROGRESS_reopen" : targetStatus;
+    var cfg = INC_ACTIONS[cfgKey] || INC_ACTIONS[targetStatus];
+    if (!cfg) return;
+    var btn = document.createElement("button");
+    btn.className   = "btn" + (targetStatus === "COMPLETED" ? " primary" : "");
+    btn.textContent = cfg.label;
+    btn.addEventListener("click", function() {
+      _pendingStatus = cfgKey;
+      var realTarget = targetStatus;
+      /* populate form */
+      document.getElementById("action-form-title").textContent = cfg.label;
+      document.getElementById("note-required").style.display = cfg.needsNote ? "" : "none";
+      document.getElementById("field-tools").style.display    = cfg.showTools ? "" : "none";
+      document.getElementById("field-crew").style.display     = cfg.showCrew  ? "" : "none";
+      document.getElementById("field-material").style.display = cfg.showMat   ? "" : "none";
+      document.getElementById("note-input").value   = "";
+      document.getElementById("tools-input").value  = "";
+      document.getElementById("crew-input").value   = "";
+      document.getElementById("form-error").style.display = "none";
+      document.getElementById("action-form").style.display = "block";
+      document.getElementById("note-input").focus();
+    });
+    actionsRow.appendChild(btn);
+  });
+}
+
+var formSubmit = document.getElementById("form-submit");
+if (formSubmit) {
+  formSubmit.addEventListener("click", function() {
+    var targetSt  = _pendingStatus === "IN_PROGRESS_reopen" ? "IN_PROGRESS" : _pendingStatus;
+    var note      = document.getElementById("note-input").value.trim();
+    var tools     = document.getElementById("tools-input").value.trim() || null;
+    var crewRaw   = document.getElementById("crew-input").value.trim();
+    var crew      = crewRaw ? parseInt(crewRaw, 10) : null;
+    var mat       = document.getElementById("material-select").value || null;
+    var errEl     = document.getElementById("form-error");
+    errEl.style.display = "none";
+    var cfg = INC_ACTIONS[_pendingStatus] || INC_ACTIONS[targetSt];
+    if (cfg && cfg.needsNote && note.length < 5) {
+      errEl.textContent   = "Please enter at least 5 characters in \"What was done\".";
+      errEl.style.display = "";
+      return;
+    }
+    formSubmit.disabled   = true;
+    formSubmit.textContent = "Saving…";
+    _incPost("/api/incidents/" + INC_ID + "/status", {
+      status:targetSt, note:note||null, tools_used:tools, crew_size:crew, actual_material:mat
+    }).then(function() {
+      window.location.reload();
+    }).catch(function(err) {
+      errEl.textContent   = typeof err === "string" ? err : "An error occurred.";
+      errEl.style.display = "";
+      formSubmit.disabled   = false;
+      formSubmit.textContent = "Submit";
+    });
+  });
+}
+
+var formCancel = document.getElementById("form-cancel");
+if (formCancel) {
+  formCancel.addEventListener("click", function() {
+    document.getElementById("action-form").style.display = "none";
+  });
+}
+
+var quickNoteBtn = document.getElementById("quick-note-btn");
+if (quickNoteBtn) {
+  quickNoteBtn.addEventListener("click", function() {
+    var val = document.getElementById("quick-note").value.trim();
+    if (!val) return;
+    quickNoteBtn.disabled   = true;
+    quickNoteBtn.textContent = "Saving…";
+    _incPost("/api/incidents/" + INC_ID + "/notes", {note:val}).then(function() {
+      window.location.reload();
+    }).catch(function(err) {
+      alert(typeof err === "string" ? err : "Could not save note.");
+      quickNoteBtn.disabled   = false;
+      quickNoteBtn.textContent = "Add note";
+    });
+  });
+}
+</script>
+</body>
+</html>
