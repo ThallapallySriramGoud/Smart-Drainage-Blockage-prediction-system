@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="csrf-token" content="{{ csrf_token }}">
   <title>Smart Drainage Monitoring System</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -673,6 +674,174 @@
     }
     .inc-footer strong { color: var(--text); }
 
+    /* ---- Phase 3B additions ---- */
+
+    /* Status pill in the incident header */
+    .inc-status-pill {
+      display: inline-block;
+      padding: 3px 11px;
+      border-radius: 999px;
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: .03em;
+      text-transform: uppercase;
+    }
+    .inc-status-detected       { background: rgba(100,116,139,.14); color: #475569; }
+    .inc-status-acknowledged   { background: rgba(37,99,235,.13);   color: #1d4ed8; }
+    .inc-status-in_progress    { background: rgba(217,119,6,.13);   color: #92400e; }
+    .inc-status-completed      { background: rgba(22,163,74,.13);   color: #15803d; }
+    .inc-status-could_not_clear{ background: rgba(220,38,38,.13);   color: #991b1b; }
+    .inc-status-false_alarm    { background: rgba(100,116,139,.13); color: #334155; }
+    @media (prefers-color-scheme: dark) {
+      .inc-status-detected       { color: #94a3b8; }
+      .inc-status-acknowledged   { color: #93c5fd; }
+      .inc-status-in_progress    { color: #fcd34d; }
+      .inc-status-completed      { color: #6ee7b7; }
+      .inc-status-could_not_clear{ color: #fca5a5; }
+      .inc-status-false_alarm    { color: #cbd5e1; }
+    }
+
+    /* Sensor state banners */
+    .inc-banner {
+      border-radius: 8px;
+      padding: 10px 14px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      margin-bottom: 14px;
+    }
+    .inc-banner.ok     { background: rgba(22,163,74,.09);  border: 1px solid rgba(22,163,74,.25);  color: var(--normal);   }
+    .inc-banner.warn   { background: rgba(217,119,6,.09);  border: 1px solid rgba(217,119,6,.28);  color: var(--warning);  }
+    .inc-banner.danger { background: rgba(220,38,38,.09);  border: 1px solid rgba(220,38,38,.28);  color: var(--critical); }
+
+    /* Action buttons row */
+    .inc-actions-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 20px;
+      margin-bottom: 4px;
+    }
+    .inc-action-btn {
+      padding: 7px 16px;
+      border-radius: 8px;
+      font-family: var(--font-body);
+      font-size: 0.82rem;
+      font-weight: 600;
+      cursor: pointer;
+      border: 1.5px solid var(--border);
+      background: var(--card);
+      color: var(--text);
+      transition: background .15s, border-color .15s;
+    }
+    .inc-action-btn:hover  { background: #eff6ff; border-color: var(--water); }
+    .inc-action-btn:disabled { opacity: .5; cursor: not-allowed; }
+    .inc-action-btn.primary { background: var(--water); border-color: var(--water); color: #fff; }
+    .inc-action-btn.primary:hover { background: #1d4ed8; border-color: #1d4ed8; }
+    @media (prefers-color-scheme: dark) {
+      .inc-action-btn:hover { background: rgba(37,99,235,.15); border-color: var(--water); }
+    }
+
+    /* Inline action form */
+    .inc-action-form {
+      margin-top: 16px;
+      padding: 16px;
+      background: var(--bg);
+      border: 1.5px solid var(--border);
+      border-radius: 12px;
+    }
+    .inc-action-form-title {
+      font-weight: 700;
+      font-size: 0.9rem;
+      margin-bottom: 12px;
+      color: var(--text);
+    }
+    .inc-field { margin-bottom: 12px; }
+    .inc-field label {
+      display: block;
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      margin-bottom: 4px;
+    }
+    .inc-field textarea,
+    .inc-field input[type="text"],
+    .inc-field input[type="number"],
+    .inc-field select {
+      width: 100%;
+      padding: 8px 11px;
+      border: 1.5px solid var(--border);
+      border-radius: 8px;
+      background: var(--card);
+      color: var(--text);
+      font-family: var(--font-body);
+      font-size: 0.88rem;
+      outline: none;
+      transition: border-color .2s;
+    }
+    .inc-field textarea { resize: vertical; min-height: 72px; }
+    .inc-field textarea:focus,
+    .inc-field input:focus,
+    .inc-field select:focus { border-color: var(--water); }
+    .inc-form-error { font-size: 0.8rem; color: var(--critical); margin-top: 8px; font-weight: 600; }
+    .inc-form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    @media (max-width: 480px) { .inc-form-row { grid-template-columns: 1fr; } }
+
+    /* Note add box */
+    .inc-note-row {
+      display: flex;
+      gap: 8px;
+      margin-top: 20px;
+      align-items: flex-start;
+    }
+    .inc-note-row input[type="text"] {
+      flex: 1;
+      padding: 8px 11px;
+      border: 1.5px solid var(--border);
+      border-radius: 8px;
+      background: var(--card);
+      color: var(--text);
+      font-family: var(--font-body);
+      font-size: 0.88rem;
+      outline: none;
+    }
+    .inc-note-row input:focus { border-color: var(--water); }
+
+    /* Action timeline */
+    .inc-timeline {
+      margin-top: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .inc-tl-item {
+      display: flex;
+      gap: 10px;
+      align-items: flex-start;
+      font-size: 0.82rem;
+    }
+    .inc-tl-dot {
+      flex-shrink: 0;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      margin-top: 4px;
+    }
+    .inc-tl-dot.system { background: var(--text-muted); }
+    .inc-tl-dot.status { background: var(--water); }
+    .inc-tl-dot.note   { background: var(--warning); }
+    .inc-tl-body { flex: 1; min-width: 0; }
+    .inc-tl-text { color: var(--text); line-height: 1.4; }
+    .inc-tl-who  { color: var(--text-muted); font-size: 0.75rem; margin-top: 1px; }
+    .inc-tl-links {
+      margin-top: 14px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 14px;
+      font-size: 0.82rem;
+    }
+    .inc-tl-links a { color: var(--water); text-decoration: none; }
+    .inc-tl-links a:hover { text-decoration: underline; }
+
     /* =====================================================================
        LOWER ROW — material summary + alert log
        ===================================================================== */
@@ -872,6 +1041,10 @@
           <a href="{{ url_for('change_password') }}"
              style="font-size:.8rem;color:var(--text-muted);text-decoration:none;white-space:nowrap;">
             Change password
+          </a>
+          <a href="/incidents"
+             style="font-size:.8rem;color:var(--text-muted);text-decoration:none;white-space:nowrap;">
+            History
           </a>
           <a href="{{ url_for('logout') }}"
              style="font-size:.8rem;color:var(--text-muted);text-decoration:none;white-space:nowrap;">
@@ -1073,8 +1246,13 @@
     <div id="incident-card">
       <div class="inc-header">
         <span id="inc-badge" class="inc-badge routine">ROUTINE</span>
+        <span id="inc-status-pill" class="inc-status-pill"></span>
         <div class="inc-title" id="inc-title">Recommended action</div>
       </div>
+      <!-- Sensor-state banners (shown by JS) -->
+      <div id="inc-banner-verified"    class="inc-banner ok"     style="display:none">Verified by sensors — channel clear and workflow complete.</div>
+      <div id="inc-banner-followup"    class="inc-banner warn"   style="display:none">Sensors are back to normal. Please record what was done.</div>
+      <div id="inc-banner-stillblocked"class="inc-banner danger" style="display:none">Marked completed, but sensors still show a blockage.</div>
       <div class="inc-meta" id="inc-meta"></div>
       <div class="inc-summary" id="inc-summary"></div>
       <ol class="inc-steps" id="inc-steps"></ol>
@@ -1090,6 +1268,54 @@
         <div><strong>Crew:</strong> <span id="inc-crew"></span></div>
         <div><strong>Est. time:</strong> <span id="inc-est-time"></span> min</div>
       </div>
+      <!-- Action buttons — one per allowed_next value -->
+      <div class="inc-actions-row" id="inc-actions-row"></div>
+      <!-- Inline action form (hidden until a button is clicked) -->
+      <div class="inc-action-form" id="inc-action-form" style="display:none">
+        <div class="inc-action-form-title" id="inc-action-form-title"></div>
+        <div class="inc-field" id="inc-field-note">
+          <label for="inc-note-input">What was done <span id="inc-note-required" style="color:var(--critical)">*</span></label>
+          <textarea id="inc-note-input" maxlength="1000" rows="3" placeholder="Describe what was done…"></textarea>
+        </div>
+        <div class="inc-form-row">
+          <div class="inc-field" id="inc-field-tools">
+            <label for="inc-tools-input">Tools used</label>
+            <input type="text" id="inc-tools-input" maxlength="200" placeholder="e.g. grab tool, drain rods">
+          </div>
+          <div class="inc-field" id="inc-field-crew">
+            <label for="inc-crew-input">Crew size</label>
+            <input type="number" id="inc-crew-input" min="1" max="50" placeholder="2">
+          </div>
+        </div>
+        <div class="inc-field" id="inc-field-material">
+          <label for="inc-material-select">Material actually found</label>
+          <select id="inc-material-select">
+            <option value="">— same as detected —</option>
+            <option value="PLASTIC">PLASTIC</option>
+            <option value="SAND">SAND</option>
+            <option value="GRAVEL">GRAVEL</option>
+            <option value="ROCK">ROCK</option>
+            <option value="WOOD">WOOD</option>
+            <option value="RUBBER">RUBBER</option>
+            <option value="OTHER">OTHER</option>
+            <option value="UNKNOWN">UNKNOWN</option>
+          </select>
+        </div>
+        <div class="inc-form-error" id="inc-form-error" style="display:none"></div>
+        <div class="inc-actions-row" style="margin-top:12px;margin-bottom:0">
+          <button class="inc-action-btn primary" id="inc-form-submit">Submit</button>
+          <button class="inc-action-btn" id="inc-form-cancel">Cancel</button>
+        </div>
+      </div>
+      <!-- Add note box -->
+      <div class="inc-note-row">
+        <input type="text" id="inc-quick-note" maxlength="1000" placeholder="Add a note…">
+        <button class="inc-action-btn" id="inc-quick-note-btn">Add note</button>
+      </div>
+      <!-- Mini timeline of recent actions -->
+      <div class="inc-timeline" id="inc-timeline"></div>
+      <!-- Follow-up / history links -->
+      <div class="inc-tl-links" id="inc-tl-links"></div>
     </div>
 
     <!-- Charts -->
@@ -1594,80 +1820,361 @@
       }).join("");
     }
 
+    /* ================================================================
+       INCIDENT CARD — Phase 3B
+       ================================================================ */
+
+    /* Read the CSRF token once from the meta tag */
+    var _csrfToken = (document.querySelector('meta[name="csrf-token"]') || {}).content || "";
+
+    /* Friendly labels and form-field visibility per target status */
+    var INC_ACTIONS = {
+      "ACKNOWLEDGED":   { label: "Acknowledge",      needsNote: false, showMat: false, showTools: false, showCrew: false },
+      "IN_PROGRESS":    { label: "Start work",        needsNote: false, showMat: true,  showTools: true,  showCrew: true  },
+      "COMPLETED":      { label: "Mark completed",    needsNote: true,  showMat: true,  showTools: true,  showCrew: true  },
+      "COULD_NOT_CLEAR":{ label: "Could not clear",   needsNote: true,  showMat: false, showTools: false, showCrew: false },
+      "FALSE_ALARM":    { label: "False alarm",        needsNote: true,  showMat: false, showTools: false, showCrew: false },
+      "IN_PROGRESS_reopen": { label: "Reopen",         needsNote: true,  showMat: false, showTools: false, showCrew: false }
+    };
+
+    /* Status pill CSS class map */
+    var INC_STATUS_CLS = {
+      "DETECTED":       "inc-status-detected",
+      "ACKNOWLEDGED":   "inc-status-acknowledged",
+      "IN_PROGRESS":    "inc-status-in_progress",
+      "COMPLETED":      "inc-status-completed",
+      "COULD_NOT_CLEAR":"inc-status-could_not_clear",
+      "FALSE_ALARM":    "inc-status-false_alarm"
+    };
+    var INC_STATUS_LABEL = {
+      "DETECTED":       "Detected",
+      "ACKNOWLEDGED":   "Acknowledged",
+      "IN_PROGRESS":    "In progress",
+      "COMPLETED":      "Completed",
+      "COULD_NOT_CLEAR":"Could not clear",
+      "FALSE_ALARM":    "False alarm"
+    };
+
+    /* Active incident id tracked so the action form can POST to it */
+    var _activeIncidentId = null;
+    var _activePendingStatus = null;  /* the target status the form is built for */
+
+    /* POST helper: sends JSON + CSRF header, returns parsed JSON promise */
+    function _incPost(url, body) {
+      return fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-CSRF-Token": _csrfToken
+        },
+        body: JSON.stringify(body)
+      }).then(function(r) {
+        if (r.status === 401) { window.location.href = "/login"; return Promise.reject("unauthorized"); }
+        return r.json().then(function(d) {
+          if (!r.ok) return Promise.reject(d.error || "Server error");
+          return d;
+        });
+      });
+    }
+
+    /* Show / hide the inline action form for a given target status */
+    function _openActionForm(targetStatus, currentMaterial) {
+      var key = targetStatus;
+      /* "Reopen" is IN_PROGRESS when current status is COMPLETED */
+      var cfg = INC_ACTIONS[key] || INC_ACTIONS[key + "_reopen"] || INC_ACTIONS["IN_PROGRESS"];
+      /* Use the _reopen config when reopening (COMPLETED→IN_PROGRESS) */
+      if (key === "IN_PROGRESS" && _activePendingStatus === "IN_PROGRESS_reopen") {
+        cfg = INC_ACTIONS["IN_PROGRESS_reopen"];
+      }
+
+      _activePendingStatus = targetStatus;
+
+      var form = document.getElementById("inc-action-form");
+      var title = document.getElementById("inc-action-form-title");
+      title.textContent = cfg.label;
+
+      /* Note field */
+      var noteField = document.getElementById("inc-field-note");
+      var noteReq   = document.getElementById("inc-note-required");
+      noteReq.style.display = cfg.needsNote ? "" : "none";
+
+      /* Optional fields */
+      document.getElementById("inc-field-tools").style.display    = cfg.showTools ? "" : "none";
+      document.getElementById("inc-field-crew").style.display     = cfg.showCrew  ? "" : "none";
+      document.getElementById("inc-field-material").style.display = cfg.showMat   ? "" : "none";
+
+      /* Pre-select the detected material */
+      if (cfg.showMat && currentMaterial) {
+        var sel = document.getElementById("inc-material-select");
+        for (var i = 0; i < sel.options.length; i++) {
+          if (sel.options[i].value === currentMaterial) {
+            sel.selectedIndex = i;
+            break;
+          }
+        }
+      }
+
+      /* Clear previous values */
+      document.getElementById("inc-note-input").value   = "";
+      document.getElementById("inc-tools-input").value  = "";
+      document.getElementById("inc-crew-input").value   = "";
+      document.getElementById("inc-form-error").style.display = "none";
+
+      form.style.display = "block";
+      document.getElementById("inc-note-input").focus();
+    }
+
     /* ---- Update the recommended-action incident card ---- */
     function updateIncident(incident) {
       var card = document.getElementById("incident-card");
       if (!incident || !incident.plan) {
         card.classList.remove("visible");
+        _activeIncidentId = null;
         return;
       }
       card.classList.add("visible");
+      _activeIncidentId = incident.id;
 
       var plan = incident.plan;
       var MAT  = MAT_COLORS;
 
-      // Urgency badge
+      /* Urgency badge */
       var badge = document.getElementById("inc-badge");
       badge.textContent = plan.urgency || "ROUTINE";
       badge.className = "inc-badge " + ((plan.urgency === "URGENT") ? "urgent" : "routine");
 
-      // Title line: incident number + location
+      /* Status pill */
+      var pill = document.getElementById("inc-status-pill");
+      var stCls = INC_STATUS_CLS[incident.status] || "inc-status-detected";
+      pill.className = "inc-status-pill " + stCls;
+      pill.textContent = INC_STATUS_LABEL[incident.status] || incident.status;
+
+      /* Sensor-state banners */
+      document.getElementById("inc-banner-verified").style.display    = incident.verified    ? "" : "none";
+      document.getElementById("inc-banner-followup").style.display    = incident.needs_followup ? "" : "none";
+      document.getElementById("inc-banner-stillblocked").style.display= incident.still_blocked  ? "" : "none";
+
+      /* Title */
       document.getElementById("inc-title").textContent =
           (plan.title || "Recommended action") +
           " \u2013 Incident #" + incident.id +
           " (" + (incident.location || "") + ")";
 
-      // Meta: material with its colour + confidence + time detected
-      var matColor = MAT[incident.material] || "var(--text-muted)";
-      var confStr  = (incident.confidence !== null && incident.confidence !== undefined)
-                      ? " \u00b7 " + Math.round(incident.confidence * 100) + "% confidence"
-                      : "";
-      var detAt    = incident.detected_at
-                      ? " \u00b7 Detected at " + fmtTime(incident.detected_at)
-                      : "";
-      document.getElementById("inc-meta").innerHTML =
-          "<span style='color:" + matColor + ";font-weight:700'>" +
-          (incident.material || "Unknown") + "</span>" + confStr + detAt;
+      /* Meta: material + confidence + detected time */
+      var metaEl   = document.getElementById("inc-meta");
+      metaEl.textContent = "";   /* clear safely */
+      var matSpan  = document.createElement("span");
+      matSpan.style.color      = MAT[incident.material] || "var(--text-muted)";
+      matSpan.style.fontWeight = "700";
+      matSpan.textContent      = incident.material || "Unknown";
+      metaEl.appendChild(matSpan);
+      var confStr = (incident.confidence !== null && incident.confidence !== undefined)
+                    ? " \u00b7 " + Math.round(incident.confidence * 100) + "% confidence"
+                    : "";
+      var detAt   = incident.detected_at
+                    ? " \u00b7 Detected at " + fmtTime(incident.detected_at)
+                    : "";
+      metaEl.appendChild(document.createTextNode(confStr + detAt));
 
-      // Summary
+      /* Summary */
       document.getElementById("inc-summary").textContent = plan.summary || "";
 
-      // Steps
+      /* Steps */
       var stepsEl = document.getElementById("inc-steps");
-      stepsEl.innerHTML = "";
-      var steps = plan.steps || [];
-      steps.forEach(function(step, i) {
-        var li = document.createElement("li");
-        li.innerHTML =
-            "<span class='inc-step-num'>" + (i + 1) + "</span>" +
-            "<span>" + step + "</span>";
+      stepsEl.textContent = "";
+      (plan.steps || []).forEach(function(step, i) {
+        var li  = document.createElement("li");
+        var num = document.createElement("span");
+        num.className   = "inc-step-num";
+        num.textContent = String(i + 1);
+        var txt = document.createElement("span");
+        txt.textContent = step;
+        li.appendChild(num);
+        li.appendChild(txt);
         stepsEl.appendChild(li);
       });
 
-      // Tool chips
+      /* Tool chips */
       var toolsEl = document.getElementById("inc-tools");
-      toolsEl.innerHTML = "";
-      var tools = plan.tools || [];
-      tools.forEach(function(t) {
+      toolsEl.textContent = "";
+      (plan.tools || []).forEach(function(t) {
         var chip = document.createElement("span");
         chip.className   = "inc-tool-chip";
         chip.textContent = t;
         toolsEl.appendChild(chip);
       });
 
-      // Safety notes
+      /* Safety notes */
       var safetyEl = document.getElementById("inc-safety");
-      safetyEl.innerHTML = "";
-      var safety = plan.safety || [];
-      safety.forEach(function(s) {
+      safetyEl.textContent = "";
+      (plan.safety || []).forEach(function(s) {
         var li = document.createElement("li");
         li.textContent = s;
         safetyEl.appendChild(li);
       });
 
-      // Footer
+      /* Footer */
       document.getElementById("inc-crew").textContent     = plan.crew || "";
       document.getElementById("inc-est-time").textContent = plan.est_time_min || "";
+
+      /* Action buttons */
+      var actRow = document.getElementById("inc-actions-row");
+      actRow.textContent = "";
+      /* Hide form when rebuilding */
+      document.getElementById("inc-action-form").style.display = "none";
+      var allowed = incident.allowed_next || [];
+      allowed.forEach(function(targetStatus) {
+        /* Determine if this IN_PROGRESS is a reopen */
+        var cfgKey = targetStatus;
+        if (targetStatus === "IN_PROGRESS" && incident.status === "COMPLETED") {
+          cfgKey = "IN_PROGRESS_reopen";
+        }
+        var cfg = INC_ACTIONS[cfgKey] || INC_ACTIONS[targetStatus];
+        if (!cfg) return;
+        var btn = document.createElement("button");
+        btn.className   = "inc-action-btn";
+        btn.textContent = cfg.label;
+        btn.setAttribute("data-target", targetStatus);
+        if (targetStatus === "COMPLETED") btn.classList.add("primary");
+        btn.addEventListener("click", function() {
+          _activePendingStatus = cfgKey;
+          _openActionForm(targetStatus, incident.material);
+          /* Scroll form into view */
+          document.getElementById("inc-action-form").scrollIntoView(
+            {behavior: "smooth", block: "nearest"});
+        });
+        actRow.appendChild(btn);
+      });
+
+      /* Submit action form */
+      document.getElementById("inc-form-submit").onclick = function() {
+        var targetSt = _activePendingStatus === "IN_PROGRESS_reopen"
+                       ? "IN_PROGRESS" : _activePendingStatus;
+        var note     = document.getElementById("inc-note-input").value.trim();
+        var tools    = document.getElementById("inc-tools-input").value.trim() || null;
+        var crewRaw  = document.getElementById("inc-crew-input").value.trim();
+        var crew     = crewRaw ? parseInt(crewRaw, 10) : null;
+        var mat      = document.getElementById("inc-material-select").value || null;
+        var errEl    = document.getElementById("inc-form-error");
+        errEl.style.display = "none";
+
+        var cfgKey2 = _activePendingStatus;
+        var cfg2    = INC_ACTIONS[cfgKey2] || INC_ACTIONS[targetSt];
+        if (cfg2 && cfg2.needsNote && note.length < 5) {
+          errEl.textContent   = "Please enter at least 5 characters in \"What was done\".";
+          errEl.style.display = "";
+          return;
+        }
+
+        var submitBtn = document.getElementById("inc-form-submit");
+        submitBtn.disabled   = true;
+        submitBtn.textContent = "Saving…";
+
+        _incPost("/api/incidents/" + _activeIncidentId + "/status", {
+          status:          targetSt,
+          note:            note || null,
+          tools_used:      tools,
+          crew_size:       crew,
+          actual_material: mat
+        }).then(function(updated) {
+          document.getElementById("inc-action-form").style.display = "none";
+          /* Trigger an immediate refresh so the card reflects new state */
+          refresh();
+        }).catch(function(err) {
+          errEl.textContent   = typeof err === "string" ? err : "An error occurred.";
+          errEl.style.display = "";
+          submitBtn.disabled   = false;
+          submitBtn.textContent = "Submit";
+        });
+      };
+
+      /* Cancel action form */
+      document.getElementById("inc-form-cancel").onclick = function() {
+        document.getElementById("inc-action-form").style.display = "none";
+      };
+
+      /* Quick note */
+      document.getElementById("inc-quick-note-btn").onclick = function() {
+        var noteVal = document.getElementById("inc-quick-note").value.trim();
+        if (!noteVal) return;
+        var btn = document.getElementById("inc-quick-note-btn");
+        btn.disabled   = true;
+        btn.textContent = "Saving…";
+        _incPost("/api/incidents/" + _activeIncidentId + "/notes", {note: noteVal})
+          .then(function() {
+            document.getElementById("inc-quick-note").value = "";
+            refresh();
+          })
+          .catch(function(err) {
+            alert(typeof err === "string" ? err : "Could not save note.");
+          })
+          .finally(function() {
+            btn.disabled   = false;
+            btn.textContent = "Add note";
+          });
+      };
+
+      /* Mini timeline of recent_actions (last 5, oldest first) */
+      var tlEl = document.getElementById("inc-timeline");
+      tlEl.textContent = "";
+      var actions = incident.recent_actions || [];
+      if (actions.length > 0) {
+        var tlLabel = document.createElement("div");
+        tlLabel.className   = "section-label";
+        tlLabel.style.marginBottom = "8px";
+        tlLabel.textContent = "Recent activity";
+        tlEl.appendChild(tlLabel);
+        actions.forEach(function(a) {
+          var item = document.createElement("div");
+          item.className = "inc-tl-item";
+          var dot  = document.createElement("div");
+          dot.className = "inc-tl-dot " + (a.action_type || "system").toLowerCase();
+          var body = document.createElement("div");
+          body.className = "inc-tl-body";
+          var txt  = document.createElement("div");
+          txt.className = "inc-tl-text";
+          /* Build the text safely with textContent only */
+          if (a.action_type === "STATUS" && a.from_status && a.to_status) {
+            txt.textContent = (INC_STATUS_LABEL[a.from_status] || a.from_status) +
+                              " \u2192 " +
+                              (INC_STATUS_LABEL[a.to_status] || a.to_status) +
+                              (a.note ? ": " + a.note : "");
+          } else if (a.note) {
+            txt.textContent = a.note;
+          } else {
+            txt.textContent = a.action_type;
+          }
+          var who  = document.createElement("div");
+          who.className = "inc-tl-who";
+          var ts = a.created_at
+              ? new Date(a.created_at * 1000).toLocaleString([], {
+                  year:"numeric", month:"short", day:"numeric",
+                  hour:"2-digit", minute:"2-digit"})
+              : "";
+          who.textContent = (a.user_login || "system") + (ts ? " \u00b7 " + ts : "");
+          body.appendChild(txt);
+          body.appendChild(who);
+          item.appendChild(dot);
+          item.appendChild(body);
+          tlEl.appendChild(item);
+        });
+      }
+
+      /* Follow-up / history links */
+      var linksEl = document.getElementById("inc-tl-links");
+      linksEl.textContent = "";
+      var histA = document.createElement("a");
+      histA.href        = "/incidents";
+      histA.textContent = "View full history";
+      linksEl.appendChild(histA);
+      var otherCount = incident.other_needs_followup || 0;
+      if (otherCount > 0) {
+        var followA = document.createElement("a");
+        followA.href = "/incidents?needs_followup=1";
+        followA.textContent = otherCount + " older incident" +
+                              (otherCount === 1 ? "" : "s") + " need follow-up";
+        linksEl.appendChild(followA);
+      }
     }
 
     /* ---- Show "no data" state ---- */

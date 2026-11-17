@@ -1652,6 +1652,7 @@ def index():
         "index.html",
         user=user,
         region=region,
+        csrf_token=_csrf_token(),
     )
 
 # ─────────────────────────────────────────────────────────────────────────────
