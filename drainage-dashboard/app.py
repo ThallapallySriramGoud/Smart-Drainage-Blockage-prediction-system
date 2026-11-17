@@ -249,6 +249,42 @@ class Incident(db.Model):
 
     region = db.relationship("Region")
 
+
+# ── IncidentAction ────────────────────────────────────────────────────────────
+
+class IncidentAction(db.Model):
+    """
+    Audit log for every change to an Incident.
+
+    action_type values:
+        "SYSTEM"  – automatic entry written by update_incident() / material update
+        "STATUS"  – operator transition (e.g. DETECTED → IN_PROGRESS)
+        "NOTE"    – free-text note added by an operator
+    """
+    __tablename__ = "incident_actions"
+    __table_args__ = (
+        db.Index("ix_incident_actions_incident_created",
+                 "incident_id", "created_at"),
+    )
+
+    id              = db.Column(db.Integer, primary_key=True)
+    incident_id     = db.Column(db.Integer, db.ForeignKey("incidents.id"),
+                                nullable=False, index=True)
+    region_id       = db.Column(db.Integer, db.ForeignKey("regions.id"),
+                                nullable=False)
+    # Nullable – system actions have no user
+    user_id         = db.Column(db.Integer, db.ForeignKey("users.id"),
+                                nullable=True)
+    user_login      = db.Column(db.String(80), nullable=False, default="system")
+    action_type     = db.Column(db.String(10), nullable=False)   # SYSTEM/STATUS/NOTE
+    from_status     = db.Column(db.String(30), nullable=True)
+    to_status       = db.Column(db.String(30), nullable=True)
+    note            = db.Column(db.String(1000), nullable=True)
+    tools_used      = db.Column(db.String(200),  nullable=True)
+    crew_size       = db.Column(db.Integer,      nullable=True)
+    actual_material = db.Column(db.String(40),   nullable=True)
+    created_at      = db.Column(db.Float,        nullable=False)
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Detection logic (unchanged from original)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -455,15 +491,121 @@ def _blockage_cause(region_id):
 # Severity ordering – higher index = worse.
 _SEV_ORDER = ["WARNING", "BLOCKAGE", "CRITICAL"]
 
+# ---------------------------------------------------------------------------
+# Workflow definition
+# ---------------------------------------------------------------------------
+
+# Allowed status transitions.  Key = current status, value = set of reachable
+# next statuses.  Anything not listed returns 400.
+ALLOWED_MOVES = {
+    "DETECTED":        {"ACKNOWLEDGED", "IN_PROGRESS", "FALSE_ALARM"},
+    "ACKNOWLEDGED":    {"IN_PROGRESS",  "FALSE_ALARM"},
+    "IN_PROGRESS":     {"COMPLETED",    "COULD_NOT_CLEAR", "FALSE_ALARM"},
+    "COULD_NOT_CLEAR": {"IN_PROGRESS"},
+    "COMPLETED":       {"IN_PROGRESS"},   # re-open
+}
+
+# A note of at least this length is required when closing or labelling.
+_NOTE_REQUIRED_FOR = {"COMPLETED", "COULD_NOT_CLEAR", "FALSE_ALARM"}
+_MIN_NOTE_LEN = 5
+
+
+def _incident_computed(inc):
+    """
+    Return computed boolean fields for an Incident.
+
+    verified       – the channel really is clear: COMPLETED + CLEARED
+    needs_followup – sensors say clear but workflow is still open
+    still_blocked  – workflow says done but sensors still active
+    allowed_next   – which status values are allowed from the current one
+    """
+    verified       = (inc.status == "COMPLETED"
+                      and inc.sensor_state == "CLEARED")
+    needs_followup = (inc.sensor_state == "CLEARED"
+                      and inc.status in {"DETECTED", "ACKNOWLEDGED", "IN_PROGRESS"})
+    still_blocked  = (inc.status == "COMPLETED"
+                      and inc.sensor_state == "ACTIVE")
+    allowed_next   = sorted(ALLOWED_MOVES.get(inc.status, set()))
+    return {
+        "verified":       verified,
+        "needs_followup": needs_followup,
+        "still_blocked":  still_blocked,
+        "allowed_next":   allowed_next,
+    }
+
+
+def _action_dict(a):
+    """Serialise an IncidentAction row to a plain dict."""
+    return {
+        "id":              a.id,
+        "incident_id":     a.incident_id,
+        "user_login":      a.user_login,
+        "action_type":     a.action_type,
+        "from_status":     a.from_status,
+        "to_status":       a.to_status,
+        "note":            a.note,
+        "tools_used":      a.tools_used,
+        "crew_size":       a.crew_size,
+        "actual_material": a.actual_material,
+        "created_at":      a.created_at,
+    }
+
 
 def _active_incident_dict(region_id):
-    """Return the active Incident for a region as a dict, or None."""
-    inc = (Incident.query
-           .filter_by(region_id=region_id, sensor_state="ACTIVE")
-           .first())
+    """
+    Return the incident dict for /api/latest:
+      - the newest incident that is ACTIVE, or
+      - the newest incident that has needs_followup true,
+    whichever is more recent (ACTIVE preferred).
+    Returns None when neither exists.
+    Also returns the count of *other* incidents needing follow-up.
+    """
+    # Closed statuses – incidents with these never need follow-up
+    _CLOSED = {"COMPLETED", "FALSE_ALARM", "COULD_NOT_CLEAR"}
+
+    # Newest ACTIVE incident
+    active = (Incident.query
+               .filter_by(region_id=region_id, sensor_state="ACTIVE")
+               .order_by(Incident.id.desc())
+               .first())
+
+    # Newest CLEARED incident whose workflow status is still open
+    followup = (Incident.query
+                .filter(
+                    Incident.region_id  == region_id,
+                    Incident.sensor_state == "CLEARED",
+                    Incident.status.notin_(_CLOSED),
+                )
+                .order_by(Incident.id.desc())
+                .first())
+
+    # Pick the most relevant one (ACTIVE wins over followup)
+    inc = active if active is not None else followup
     if inc is None:
         return None
-    return _incident_dict(inc)
+
+    # Count of *other* incidents (excluding the one we're returning) that
+    # need follow-up.  One SQL query, no loop.
+    other_needs_followup = (Incident.query
+                             .filter(
+                                 Incident.region_id    == region_id,
+                                 Incident.sensor_state == "CLEARED",
+                                 Incident.status.notin_(_CLOSED),
+                                 Incident.id           != inc.id,
+                             )
+                             .count())
+
+    # Last 5 actions for this incident
+    last_actions = (IncidentAction.query
+                    .filter_by(incident_id=inc.id)
+                    .order_by(IncidentAction.created_at.desc())
+                    .limit(5)
+                    .all())
+
+    d = _incident_dict(inc)
+    d["other_needs_followup"] = other_needs_followup
+    d["recent_actions"] = [_action_dict(a) for a in reversed(last_actions)]
+    return d
 
 
 def _incident_dict(inc):
@@ -475,7 +617,7 @@ def _incident_dict(inc):
             plan_obj = _json.loads(inc.plan)
     except Exception:
         pass
-    return {
+    d = {
         "id":           inc.id,
         "status":       inc.status,
         "severity":     inc.severity,
@@ -488,6 +630,9 @@ def _incident_dict(inc):
         "cleared_at":   inc.cleared_at,
         "plan":         plan_obj,
     }
+    # Phase 3A: add computed workflow fields
+    d.update(_incident_computed(inc))
+    return d
 
 
 def _refresh_plan(inc):
@@ -496,6 +641,31 @@ def _refresh_plan(inc):
     plan_obj = get_plan(inc.material, inc.severity, inc.location)
     inc.plan            = _json.dumps(plan_obj)
     inc.plan_updated_at = time.time()
+
+
+def log_action(incident_id, region_id, action_type, note=None,
+               from_status=None, to_status=None, tools_used=None,
+               crew_size=None, actual_material=None,
+               user_id=None, user_login="system"):
+    """
+    Write one IncidentAction row.  Called both from update_incident() for
+    SYSTEM events and from the API endpoints for STATUS and NOTE actions.
+    Does NOT commit – the caller owns the transaction.
+    """
+    db.session.add(IncidentAction(
+        incident_id     = incident_id,
+        region_id       = region_id,
+        user_id         = user_id,
+        user_login      = user_login,
+        action_type     = action_type,
+        from_status     = from_status,
+        to_status       = to_status,
+        note            = note,
+        tools_used      = tools_used,
+        crew_size       = crew_size,
+        actual_material = actual_material,
+        created_at      = time.time(),
+    ))
 
 
 def update_incident(region, analysis, reading):
@@ -582,7 +752,7 @@ def update_incident(region, analysis, reading):
         _refresh_plan(inc)
 
         db.session.add(inc)
-        db.session.flush()   # populate inc.id before writing the alert
+        db.session.flush()   # populate inc.id before writing the alert and actions
 
         db.session.add(Alert(
             region_id=region.id,
@@ -592,13 +762,39 @@ def update_incident(region, analysis, reading):
             message="Incident #{} opened ({})".format(inc.id, location),
         ))
 
+        # SYSTEM action: incident opened
+        log_action(
+            incident_id  = inc.id,
+            region_id    = region.id,
+            action_type  = "SYSTEM",
+            note         = "Detected {}, severity {}".format(
+                           "between {} and {}".format(*location.split("-"))
+                           if "-" in location else location,
+                           status),
+        )
+        # SYSTEM action: plan generated
+        log_action(
+            incident_id  = inc.id,
+            region_id    = region.id,
+            action_type  = "SYSTEM",
+            note         = "Recommended plan generated for material: {}".format(mat),
+        )
+
     # ── Case 2: Blockage with an existing active incident ───────────────────
     elif is_blockage and active is not None:
         # Raise severity if the status got worse; never lower it.
         try:
             if _SEV_ORDER.index(status) > _SEV_ORDER.index(active.severity):
+                old_sev = active.severity
                 active.severity = status
                 _refresh_plan(active)
+                log_action(
+                    incident_id = active.id,
+                    region_id   = region.id,
+                    action_type = "SYSTEM",
+                    note        = "Severity escalated from {} to {}".format(
+                                  old_sev, status),
+                )
         except ValueError:
             pass   # status not in _SEV_ORDER – ignore
 
@@ -632,6 +828,12 @@ def update_incident(region, analysis, reading):
                 location=any_active.location,
                 message="Incident #{}: sensors back to normal".format(any_active.id),
             ))
+            log_action(
+                incident_id = any_active.id,
+                region_id   = region.id,
+                action_type = "SYSTEM",
+                note        = "Sensors back to normal after 5 consecutive clear readings.",
+            )
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Rate-limiting helpers (in-memory, fine for one or two workers)
@@ -936,9 +1138,18 @@ def api_material():
                       .filter_by(region_id=region.id, sensor_state="ACTIVE")
                       .first())
         if active_inc is not None:
+            old_mat = active_inc.material
             active_inc.material            = material
             active_inc.material_confidence = confidence
             _refresh_plan(active_inc)
+            if old_mat != material:
+                log_action(
+                    incident_id = active_inc.id,
+                    region_id   = region.id,
+                    action_type = "SYSTEM",
+                    note        = "Material updated: {} → {} ({:.0%} confidence)".format(
+                                  old_mat, material, confidence),
+                )
 
     db.session.commit()
     return jsonify({"material": material, "confidence": confidence,
@@ -1055,19 +1266,365 @@ def api_alerts():
 @app.route("/api/incidents")
 @login_required
 def api_incidents():
-    """Return recent incidents for the user's region, newest first."""
+    """
+    Return incidents for the user's region, newest first.
+
+    Query parameters
+    ----------------
+    status          – filter by exact workflow status value
+    material        – filter by material
+    date_from       – YYYY-MM-DD, filter by detected_at >=
+    date_to         – YYYY-MM-DD, filter by detected_at < (next day)
+    needs_followup  – "true" to return only sensor_state=CLEARED + open status
+    page            – 1-based page number (default 1)
+    per_page        – page size (default 20, max 100)
+
+    Response
+    --------
+    {incidents, page, pages, total, stats}
+    """
+    import json as _json
+    from datetime import date as _date
+
     user   = _current_user()
     region = _region_for_session(user)
     if region is None:
-        return jsonify({"incidents": []})
+        return jsonify({"incidents": [], "page": 1, "pages": 0,
+                        "total": 0, "stats": {}})
 
-    limit = min(max(1, request.args.get("limit", 20, type=int)), 200)
-    rows  = (Incident.query
-             .filter_by(region_id=region.id)
-             .order_by(Incident.id.desc())
-             .limit(limit)
-             .all())
-    return jsonify({"incidents": [_incident_dict(r) for r in rows]})
+    _CLOSED = {"COMPLETED", "FALSE_ALARM", "COULD_NOT_CLEAR"}
+
+    q = Incident.query.filter_by(region_id=region.id)
+
+    # -- Filters -----------------------------------------------------------
+    status_filter = request.args.get("status", "").strip()
+    if status_filter:
+        q = q.filter(Incident.status == status_filter)
+
+    material_filter = request.args.get("material", "").strip()
+    if material_filter:
+        q = q.filter(Incident.material == material_filter)
+
+    date_from = request.args.get("date_from", "").strip()
+    if date_from:
+        try:
+            ts_from = datetime.strptime(date_from, "%Y-%m-%d").replace(
+                tzinfo=timezone.utc).timestamp()
+            q = q.filter(Incident.detected_at >= ts_from)
+        except ValueError:
+            return jsonify({"error": "date_from must be YYYY-MM-DD"}), 400
+
+    date_to = request.args.get("date_to", "").strip()
+    if date_to:
+        try:
+            ts_to = datetime.strptime(date_to, "%Y-%m-%d").replace(
+                tzinfo=timezone.utc).timestamp() + 86400  # exclusive end
+            q = q.filter(Incident.detected_at < ts_to)
+        except ValueError:
+            return jsonify({"error": "date_to must be YYYY-MM-DD"}), 400
+
+    if request.args.get("needs_followup", "").lower() == "true":
+        q = q.filter(
+            Incident.sensor_state == "CLEARED",
+            Incident.status.notin_(_CLOSED),
+        )
+
+    # -- Stats (computed on the unfiltered-by-page, but filtered query) -----
+    all_rows = q.all()     # one query; pagination slices below
+    total    = len(all_rows)
+    open_count = sum(
+        1 for r in all_rows if r.status not in _CLOSED
+    )
+    completed_count = sum(1 for r in all_rows if r.status == "COMPLETED")
+
+    # Average minutes to first ACKNOWLEDGED or IN_PROGRESS action
+    # Average minutes to COMPLETED
+    # We load action rows in bulk for the incidents in all_rows.
+    inc_ids = [r.id for r in all_rows]
+    if inc_ids:
+        all_actions = (IncidentAction.query
+                       .filter(
+                           IncidentAction.incident_id.in_(inc_ids),
+                           IncidentAction.action_type == "STATUS",
+                       )
+                       .order_by(IncidentAction.incident_id,
+                                 IncidentAction.created_at)
+                       .all())
+        # Group by incident_id
+        _ack_times   = []
+        _comp_times  = []
+        _first_ack   = {}   # incident_id -> first ack/in_progress action ts
+        _first_comp  = {}
+        for a in all_actions:
+            if a.to_status in ("ACKNOWLEDGED", "IN_PROGRESS") \
+                    and a.incident_id not in _first_ack:
+                _first_ack[a.incident_id] = a.created_at
+            if a.to_status == "COMPLETED" \
+                    and a.incident_id not in _first_comp:
+                _first_comp[a.incident_id] = a.created_at
+
+        inc_dict_by_id = {r.id: r for r in all_rows}
+        for iid, ack_ts in _first_ack.items():
+            d_at = inc_dict_by_id[iid].detected_at
+            if d_at:
+                _ack_times.append((ack_ts - d_at) / 60.0)
+        for iid, comp_ts in _first_comp.items():
+            d_at = inc_dict_by_id[iid].detected_at
+            if d_at:
+                _comp_times.append((comp_ts - d_at) / 60.0)
+
+        avg_ack  = round(sum(_ack_times) / len(_ack_times), 1) \
+                   if _ack_times else None
+        avg_comp = round(sum(_comp_times) / len(_comp_times), 1) \
+                   if _comp_times else None
+    else:
+        avg_ack = avg_comp = None
+
+    # Most common material (across the filtered set)
+    mat_counts = {}
+    for r in all_rows:
+        mat_counts[r.material] = mat_counts.get(r.material, 0) + 1
+    most_common = max(mat_counts, key=mat_counts.get) if mat_counts else None
+
+    stats = {
+        "total":                        total,
+        "open":                         open_count,
+        "completed":                    completed_count,
+        "avg_minutes_to_acknowledge":   avg_ack,
+        "avg_minutes_to_complete":      avg_comp,
+        "most_common_material":         most_common,
+    }
+
+    # -- Pagination ---------------------------------------------------------
+    per_page = min(max(1, request.args.get("per_page", 20, type=int)), 100)
+    page     = max(1, request.args.get("page", 1, type=int))
+    pages    = max(1, (total + per_page - 1) // per_page) if total else 1
+
+    # Slice the already-fetched list (sorted newest-first)
+    all_rows_sorted = sorted(all_rows, key=lambda r: r.id, reverse=True)
+    start  = (page - 1) * per_page
+    paged  = all_rows_sorted[start: start + per_page]
+
+    return jsonify({
+        "incidents": [_incident_dict(r) for r in paged],
+        "page":      page,
+        "pages":     pages,
+        "total":     total,
+        "stats":     stats,
+    })
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CSRF check for JSON/API POST endpoints (uses X-CSRF-Token header)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _api_csrf_ok():
+    """
+    For JSON API endpoints the CSRF token arrives in the X-CSRF-Token header
+    rather than a form field.  Uses the same session token and compare_digest
+    as the existing form CSRF.
+    """
+    token     = session.get("csrf_token", "")
+    submitted = request.headers.get("X-CSRF-Token", "")
+    if not token or not submitted:
+        return False
+    return hmac.compare_digest(token, submitted)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Incident workflow endpoints
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _get_incident_for_region(incident_id, region):
+    """
+    Fetch Incident by id and verify it belongs to the given region.
+    Returns (incident, None) on success, (None, error_response) on failure.
+    Never trusts a user-supplied region_id.
+    """
+    inc = db.session.get(Incident, incident_id)
+    if inc is None or inc.region_id != region.id:
+        return None, (jsonify({"error": "incident not found"}), 404)
+    return inc, None
+
+
+@app.route("/api/incidents/<int:incident_id>", methods=["GET"])
+@login_required
+def api_incident_detail(incident_id):
+    """Return the full incident: dict, plan (parsed), snapshot, all actions."""
+    import json as _json
+
+    user   = _current_user()
+    region = _region_for_session(user)
+    if region is None:
+        return jsonify({"error": "no region selected"}), 400
+
+    inc, err = _get_incident_for_region(incident_id, region)
+    if err:
+        return err
+
+    # All actions oldest-first (one query)
+    actions = (IncidentAction.query
+               .filter_by(incident_id=inc.id)
+               .order_by(IncidentAction.created_at)
+               .all())
+
+    snapshot_obj = None
+    try:
+        if inc.snapshot:
+            snapshot_obj = _json.loads(inc.snapshot)
+    except Exception:
+        pass
+
+    plan_obj = None
+    try:
+        if inc.plan:
+            plan_obj = _json.loads(inc.plan)
+    except Exception:
+        pass
+
+    d = _incident_dict(inc)
+    d["plan"]     = plan_obj
+    d["snapshot"] = snapshot_obj
+    d["actions"]  = [_action_dict(a) for a in actions]
+    return jsonify(d)
+
+
+@app.route("/api/incidents/<int:incident_id>/status", methods=["POST"])
+@login_required
+def api_incident_status(incident_id):
+    """
+    Transition an incident's workflow status.
+
+    Request JSON
+    ------------
+    status          (required) – new workflow status
+    note            (required for COMPLETED, COULD_NOT_CLEAR, FALSE_ALARM,
+                     and re-opening COMPLETED→IN_PROGRESS; min 5 chars)
+    tools_used      (optional, max 200 chars)
+    crew_size       (optional int 1-50)
+    actual_material (optional, must be a known material name)
+    """
+    if not _api_csrf_ok():
+        return jsonify({"error": "CSRF token missing or invalid"}), 403
+
+    user   = _current_user()
+    region = _region_for_session(user)
+    if region is None:
+        return jsonify({"error": "no region selected"}), 400
+
+    inc, err = _get_incident_for_region(incident_id, region)
+    if err:
+        return err
+
+    body = request.get_json(silent=True) or {}
+    new_status = (body.get("status") or "").strip()
+
+    if not new_status:
+        return jsonify({"error": "status is required"}), 400
+
+    # Validate transition
+    allowed = ALLOWED_MOVES.get(inc.status, set())
+    if new_status not in allowed:
+        return jsonify({
+            "error": "Cannot move from {} to {}. Allowed: {}.".format(
+                     inc.status, new_status,
+                     ", ".join(sorted(allowed)) or "none"),
+        }), 400
+
+    note            = (body.get("note") or "").strip()
+    tools_used      = (body.get("tools_used") or "").strip() or None
+    crew_size       = body.get("crew_size")
+    actual_material = (body.get("actual_material") or "").strip() or None
+
+    # Note is required for closing / labelling transitions and for reopening
+    is_reopen = (inc.status == "COMPLETED" and new_status == "IN_PROGRESS")
+    if (new_status in _NOTE_REQUIRED_FOR or is_reopen) and len(note) < _MIN_NOTE_LEN:
+        return jsonify({
+            "error": "A note of at least {} characters is required "
+                     "for status {}.".format(_MIN_NOTE_LEN, new_status),
+        }), 400
+
+    # Validate optional fields
+    if note and len(note) > 1000:
+        return jsonify({"error": "note must be 1000 characters or fewer"}), 400
+    if tools_used and len(tools_used) > 200:
+        return jsonify({"error": "tools_used must be 200 characters or fewer"}), 400
+    if crew_size is not None:
+        if not isinstance(crew_size, int) or crew_size < 1 or crew_size > 50:
+            return jsonify({"error": "crew_size must be an integer between 1 and 50"}), 400
+    if actual_material and actual_material not in MATERIALS:
+        return jsonify({
+            "error": "actual_material must be one of: {}".format(
+                     ", ".join(MATERIALS)),
+        }), 400
+
+    old_status = inc.status
+    inc.status = new_status
+
+    # Update incident fields when material is confirmed via this action
+    if actual_material and actual_material != "UNKNOWN":
+        inc.material = actual_material
+        _refresh_plan(inc)
+
+    log_action(
+        incident_id     = inc.id,
+        region_id       = region.id,
+        action_type     = "STATUS",
+        from_status     = old_status,
+        to_status       = new_status,
+        note            = note or None,
+        tools_used      = tools_used,
+        crew_size       = crew_size,
+        actual_material = actual_material,
+        user_id         = user.id,
+        user_login      = user.login_id,
+    )
+    db.session.commit()
+
+    # Return the updated incident with all its actions
+    actions = (IncidentAction.query
+               .filter_by(incident_id=inc.id)
+               .order_by(IncidentAction.created_at)
+               .all())
+    d = _incident_dict(inc)
+    d["actions"] = [_action_dict(a) for a in actions]
+    return jsonify(d)
+
+
+@app.route("/api/incidents/<int:incident_id>/notes", methods=["POST"])
+@login_required
+def api_incident_notes(incident_id):
+    """Add a free-text note to an incident (1 to 1000 characters)."""
+    if not _api_csrf_ok():
+        return jsonify({"error": "CSRF token missing or invalid"}), 403
+
+    user   = _current_user()
+    region = _region_for_session(user)
+    if region is None:
+        return jsonify({"error": "no region selected"}), 400
+
+    inc, err = _get_incident_for_region(incident_id, region)
+    if err:
+        return err
+
+    body = request.get_json(silent=True) or {}
+    note = (body.get("note") or "").strip()
+
+    if len(note) < 1:
+        return jsonify({"error": "note must not be empty"}), 400
+    if len(note) > 1000:
+        return jsonify({"error": "note must be 1000 characters or fewer"}), 400
+
+    log_action(
+        incident_id = inc.id,
+        region_id   = region.id,
+        action_type = "NOTE",
+        note        = note,
+        user_id     = user.id,
+        user_login  = user.login_id,
+    )
+    db.session.commit()
+    return jsonify({"ok": True})
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Dashboard page
