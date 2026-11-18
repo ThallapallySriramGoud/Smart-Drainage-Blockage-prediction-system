@@ -152,3 +152,53 @@ environment variable (defaults to the Render deployment URL).
 | GET | `/api/history?n=60` | Last n readings (max 500) |
 | GET | `/api/alerts?n=10` | Latest alerts, newest first |
 | GET | `/` | The dashboard page |
+
+## Chatbot (Phase 4A)
+
+The dashboard includes an AI assistant powered by Google Gemini.
+
+### Environment variables
+
+| Variable | Required | Default | Meaning |
+|---|---|---|---|
+| `GEMINI_API_KEY` | No | *(empty — chatbot uses fallback rules)* | Your Google Gemini API key |
+| `GEMINI_MODEL` | No | `gemini-2.0-flash` | Gemini model name to use |
+
+Set these in your Render environment (or in your shell for local testing):
+
+```bash
+# Linux / Mac
+export GEMINI_API_KEY="AIza..."
+export GEMINI_MODEL="gemini-2.0-flash"   # optional
+
+# Windows PowerShell
+$env:GEMINI_API_KEY = "AIza..."
+```
+
+When `GEMINI_API_KEY` is not set the chatbot still works, using built-in
+keyword rules to answer questions about the current sensor status, the active
+incident plan, overflow time, recent incidents and safety reminders.
+
+### Getting a Gemini API key
+
+1. Go to <https://aistudio.google.com/app/apikey>.
+2. Create a new API key (the free tier is sufficient for development).
+3. Copy the key and set it as `GEMINI_API_KEY`.
+
+### Rate limits and data notice
+
+- The chatbot is limited to **10 messages per minute** and **100 messages per
+  day** per user (counted in the database).
+- The free Gemini tier has its own rate limits; if they are exceeded the
+  chatbot falls back to keyword rules automatically.
+- **Data notice:** when `GEMINI_API_KEY` is set, messages and sensor context
+  are sent to Google's Gemini API. Google may use this data to improve its
+  products. Do not send personal data, passwords or keys through the chatbot.
+  See <https://ai.google.dev/gemini-api/terms> for the full terms of service.
+
+### Chat API endpoints
+
+| Method | Path | Description |
+|---|---|---|
+| POST | `/api/chat` | Send a message; returns `{reply, source}` (requires login + X-CSRF-Token) |
+| GET | `/api/chat/history` | Last 20 messages for this user in this region |
