@@ -1605,7 +1605,9 @@
         <div class="inc-action-form-title" id="inc-action-form-title"></div>
         <div class="inc-field" id="inc-field-note">
           <label for="inc-note-input">What was done <span id="inc-note-required" style="color:var(--critical)">*</span></label>
-          <textarea id="inc-note-input" maxlength="1000" rows="3" placeholder="Describe what was done…"></textarea>
+          <textarea id="inc-note-input" maxlength="1000" rows="3" placeholder="Describe what was done…"
+                    oninput="(function(el){var ctr=document.getElementById('inc-note-counter');if(ctr){ctr.textContent=el.value.length+'/1000';}})(this)"></textarea>
+          <div id="inc-note-counter" style="font-size:.7rem;color:var(--text-muted);text-align:right;margin-top:2px">0/1000</div>
         </div>
         <div class="inc-form-row">
           <div class="inc-field" id="inc-field-tools">
@@ -1642,6 +1644,7 @@
         <input type="text" id="inc-quick-note" maxlength="1000" placeholder="Add a note…">
         <button class="inc-action-btn" id="inc-quick-note-btn">Add note</button>
       </div>
+      <div id="inc-quick-note-error" style="font-size:.8rem;color:var(--critical);display:none;margin-top:4px"></div>
       <!-- Mini timeline of recent actions -->
       <div class="inc-timeline" id="inc-timeline"></div>
       <!-- Follow-up / history links -->
@@ -2151,7 +2154,7 @@
     }
 
     /* ================================================================
-       INCIDENT CARD — Phase 3B
+       INCIDENT CARD — Phase 3B (fixed in 4+)
        ================================================================ */
 
     /* Read the CSRF token once from the meta tag */
@@ -2159,11 +2162,11 @@
 
     /* Friendly labels and form-field visibility per target status */
     var INC_ACTIONS = {
-      "ACKNOWLEDGED":   { label: "Acknowledge",      needsNote: false, showMat: false, showTools: false, showCrew: false },
-      "IN_PROGRESS":    { label: "Start work",        needsNote: false, showMat: true,  showTools: true,  showCrew: true  },
-      "COMPLETED":      { label: "Mark completed",    needsNote: true,  showMat: true,  showTools: true,  showCrew: true  },
-      "COULD_NOT_CLEAR":{ label: "Could not clear",   needsNote: true,  showMat: false, showTools: false, showCrew: false },
-      "FALSE_ALARM":    { label: "False alarm",        needsNote: true,  showMat: false, showTools: false, showCrew: false },
+      "ACKNOWLEDGED":       { label: "Acknowledge",    needsNote: false, showMat: false, showTools: false, showCrew: false },
+      "IN_PROGRESS":        { label: "Start work",     needsNote: false, showMat: true,  showTools: true,  showCrew: true  },
+      "COMPLETED":          { label: "Mark completed", needsNote: true,  showMat: true,  showTools: true,  showCrew: true  },
+      "COULD_NOT_CLEAR":    { label: "Could not clear",needsNote: true,  showMat: false, showTools: false, showCrew: false },
+      "FALSE_ALARM":        { label: "False alarm",    needsNote: true,  showMat: false, showTools: false, showCrew: false },
       "IN_PROGRESS_reopen": { label: "Reopen",         needsNote: true,  showMat: false, showTools: false, showCrew: false }
     };
 
@@ -2186,10 +2189,14 @@
     };
 
     /* Active incident id tracked so the action form can POST to it */
-    var _activeIncidentId = null;
-    var _activePendingStatus = null;  /* the target status the form is built for */
+    var _activeIncidentId   = null;
+    var _activePendingStatus = null;
+    var _incSubmitting       = false;   /* double-submit guard */
 
-    /* POST helper: sends JSON + CSRF header, returns parsed JSON promise */
+    /* ---- POST helper ----
+       Always resolves with the parsed JSON body.
+       Rejects with a plain error string on any failure (network, non-JSON,
+       server error, 401 redirect).                                        */
     function _incPost(url, body) {
       return fetch(url, {
         method: "POST",
@@ -2199,69 +2206,412 @@
         },
         body: JSON.stringify(body)
       }).then(function(r) {
-        if (r.status === 401) { window.location.href = "/login"; return Promise.reject("unauthorized"); }
-        return r.json().then(function(d) {
-          if (!r.ok) return Promise.reject(d.error || "Server error");
-          return d;
+        if (r.status === 401) {
+          window.location.href = "/login";
+          return Promise.reject("unauthorized");
+        }
+        /* Try to parse JSON regardless of status so we can read "error" */
+        return r.text().then(function(text) {
+          var data;
+          try { data = JSON.parse(text); } catch(e) { data = {}; }
+          if (!r.ok) {
+            return Promise.reject(data.error || "Could not save. Please try again.");
+          }
+          return data;
+        });
+      }).catch(function(err) {
+        if (err === "unauthorized") return Promise.reject(err);
+        /* Network error */
+        return Promise.reject(typeof err === "string" ? err : "Could not save. Please try again.");
+      });
+    }
+
+    /* ---- Build the inline action form for a chosen target status ---- */
+    function _openActionForm(targetStatus, currentMaterial) {
+      /* Determine config key (reopen uses a special label) */
+      var cfgKey = targetStatus;
+      if (targetStatus === "IN_PROGRESS" &&
+          document.getElementById("inc-status-pill").textContent.trim() === "Completed") {
+        cfgKey = "IN_PROGRESS_reopen";
+      }
+      _activePendingStatus = cfgKey;
+
+      var cfg = INC_ACTIONS[cfgKey] || INC_ACTIONS[targetStatus] || INC_ACTIONS["IN_PROGRESS"];
+
+      document.getElementById("inc-action-form-title").textContent = cfg.label;
+      document.getElementById("inc-note-required").style.display   = cfg.needsNote ? "" : "none";
+      document.getElementById("inc-field-tools").style.display     = cfg.showTools ? "" : "none";
+      document.getElementById("inc-field-crew").style.display      = cfg.showCrew  ? "" : "none";
+      document.getElementById("inc-field-material").style.display  = cfg.showMat   ? "" : "none";
+
+      /* Pre-select detected material */
+      if (cfg.showMat && currentMaterial) {
+        var sel = document.getElementById("inc-material-select");
+        for (var i = 0; i < sel.options.length; i++) {
+          if (sel.options[i].value === currentMaterial) { sel.selectedIndex = i; break; }
+        }
+      }
+
+      /* Reset form state */
+      var noteEl = document.getElementById("inc-note-input");
+      noteEl.value = "";
+      document.getElementById("inc-tools-input").value = "";
+      document.getElementById("inc-crew-input").value  = "";
+      _setIncFormError("");
+      _updateNoteCounter();
+
+      var submitBtn = document.getElementById("inc-form-submit");
+      submitBtn.disabled    = false;
+      submitBtn.textContent = "Submit";
+      _incSubmitting = false;
+
+      document.getElementById("inc-action-form").style.display = "block";
+      noteEl.focus();
+    }
+
+    function _setIncFormError(msg) {
+      var el = document.getElementById("inc-form-error");
+      if (msg) {
+        el.textContent   = msg;
+        el.style.display = "";
+      } else {
+        el.textContent   = "";
+        el.style.display = "none";
+      }
+    }
+
+    function _updateNoteCounter() {
+      var noteEl = document.getElementById("inc-note-input");
+      var ctr    = document.getElementById("inc-note-counter");
+      if (!ctr) return;
+      var n = noteEl.value.length;
+      ctr.textContent = n + "/1000";
+      ctr.style.color = n > 1000 ? "var(--critical)" : "var(--text-muted)";
+    }
+
+    /* ---- Rebuild the timeline inside the incident card ---- */
+    function _rebuildTimeline(actions) {
+      var tlEl = document.getElementById("inc-timeline");
+      tlEl.textContent = "";
+      if (!actions || actions.length === 0) return;
+      var tlLabel = document.createElement("div");
+      tlLabel.className = "section-label";
+      tlLabel.style.marginBottom = "8px";
+      tlLabel.textContent = "Recent activity";
+      tlEl.appendChild(tlLabel);
+      actions.forEach(function(a) {
+        var item = document.createElement("div");
+        item.className = "inc-tl-item";
+        var dot = document.createElement("div");
+        dot.className = "inc-tl-dot " + (a.action_type || "system").toLowerCase();
+        var body = document.createElement("div");
+        body.className = "inc-tl-body";
+        var txt = document.createElement("div");
+        txt.className = "inc-tl-text";
+        if (a.action_type === "STATUS" && a.from_status && a.to_status) {
+          txt.textContent = (INC_STATUS_LABEL[a.from_status] || a.from_status) +
+                            " \u2192 " +
+                            (INC_STATUS_LABEL[a.to_status] || a.to_status) +
+                            (a.note ? ": " + a.note : "");
+        } else if (a.note) {
+          txt.textContent = a.note;
+        } else {
+          txt.textContent = a.action_type;
+        }
+        var who = document.createElement("div");
+        who.className = "inc-tl-who";
+        var ts = a.created_at
+            ? new Date(a.created_at * 1000).toLocaleString([], {
+                year:"numeric", month:"short", day:"numeric",
+                hour:"2-digit", minute:"2-digit"})
+            : "";
+        who.textContent = (a.user_login || "system") + (ts ? " \u00b7 " + ts : "");
+        body.appendChild(txt);
+        body.appendChild(who);
+        item.appendChild(dot);
+        item.appendChild(body);
+        tlEl.appendChild(item);
+      });
+    }
+
+    /* ---- Show a compact "Resolved" summary for closed incidents ---- */
+    function _showResolvedCard(incident) {
+      var card = document.getElementById("incident-card");
+      card.classList.add("visible");
+      _activeIncidentId = incident.id;
+
+      /* Header: status pill only */
+      var badge = document.getElementById("inc-badge");
+      badge.textContent = "";
+      badge.className   = "inc-badge";
+
+      var pill = document.getElementById("inc-status-pill");
+      pill.className   = "inc-status-pill " + (INC_STATUS_CLS[incident.status] || "inc-status-detected");
+      pill.textContent = INC_STATUS_LABEL[incident.status] || incident.status;
+
+      /* Hide banners */
+      document.getElementById("inc-banner-verified").style.display     = "none";
+      document.getElementById("inc-banner-followup").style.display     = "none";
+      document.getElementById("inc-banner-stillblocked").style.display = "none";
+
+      document.getElementById("inc-title").textContent =
+          "Resolved – Incident #" + incident.id + " (" + (incident.location || "") + ")";
+
+      /* Meta */
+      var metaEl = document.getElementById("inc-meta");
+      metaEl.textContent = "";
+      var t = incident.cleared_at
+              ? " Cleared at " + new Date(incident.cleared_at * 1000).toLocaleString([], {
+                  month:"short", day:"numeric", hour:"2-digit", minute:"2-digit"})
+              : "";
+      metaEl.textContent = (incident.material || "") + t;
+
+      /* Show only the final note from the last STATUS action if available */
+      var summaryEl = document.getElementById("inc-summary");
+      summaryEl.textContent = "";
+      var stepsEl  = document.getElementById("inc-steps");   stepsEl.textContent = "";
+      var toolsEl  = document.getElementById("inc-tools");   toolsEl.textContent = "";
+      var safetyEl = document.getElementById("inc-safety");  safetyEl.textContent = "";
+      document.getElementById("inc-crew").textContent     = "";
+      document.getElementById("inc-est-time").textContent = "";
+
+      var actions = incident.recent_actions || [];
+      /* Find the last STATUS action with a note */
+      var lastNote = "";
+      var lastUser = "";
+      var lastTs   = null;
+      for (var i = actions.length - 1; i >= 0; i--) {
+        if (actions[i].action_type === "STATUS" && actions[i].note) {
+          lastNote = actions[i].note;
+          lastUser = actions[i].user_login || "";
+          lastTs   = actions[i].created_at;
+          break;
+        }
+      }
+      if (lastNote) {
+        summaryEl.textContent = lastNote;
+        var whoEl = document.createElement("div");
+        whoEl.style.cssText = "font-size:.78rem;color:var(--text-muted);margin-top:4px";
+        var tsStr = lastTs
+            ? " \u00b7 " + new Date(lastTs * 1000).toLocaleString([], {
+                month:"short", day:"numeric", hour:"2-digit", minute:"2-digit"})
+            : "";
+        whoEl.textContent = lastUser + tsStr;
+        summaryEl.parentNode.insertBefore(whoEl, summaryEl.nextSibling);
+      }
+
+      /* Action buttons: only Reopen + Dismiss */
+      var actRow = document.getElementById("inc-actions-row");
+      actRow.textContent = "";
+      document.getElementById("inc-action-form").style.display = "none";
+
+      /* Reopen button */
+      var reopenBtn = document.createElement("button");
+      reopenBtn.className   = "inc-action-btn";
+      reopenBtn.textContent = "Reopen";
+      reopenBtn.addEventListener("click", function() {
+        _activePendingStatus = "IN_PROGRESS_reopen";
+        _openActionForm("IN_PROGRESS", incident.material);
+        document.getElementById("inc-action-form").scrollIntoView(
+            {behavior:"smooth", block:"nearest"});
+      });
+      actRow.appendChild(reopenBtn);
+
+      /* Dismiss button (client-side only, hides the card) */
+      var dismissBtn = document.createElement("button");
+      dismissBtn.className   = "inc-action-btn";
+      dismissBtn.textContent = "Dismiss";
+      dismissBtn.addEventListener("click", function() {
+        document.getElementById("incident-card").classList.remove("visible");
+      });
+      actRow.appendChild(dismissBtn);
+
+      /* Wire submit for the reopen form */
+      _wireSubmitHandler(incident.material);
+
+      /* Note box */
+      _wireNoteHandler();
+
+      /* Timeline */
+      _rebuildTimeline(actions);
+
+      /* Links */
+      _rebuildLinks(incident);
+    }
+
+    /* ---- Wire the submit button (called each time updateIncident runs) ---- */
+    function _wireSubmitHandler(currentMaterial) {
+      var submitBtn = document.getElementById("inc-form-submit");
+      /* Replace the element to remove old listeners */
+      var newBtn = submitBtn.cloneNode(true);
+      submitBtn.parentNode.replaceChild(newBtn, submitBtn);
+
+      newBtn.addEventListener("click", function() {
+        if (_incSubmitting) return;
+        var targetSt = (_activePendingStatus === "IN_PROGRESS_reopen")
+                       ? "IN_PROGRESS" : _activePendingStatus;
+        var note     = document.getElementById("inc-note-input").value.trim();
+        var tools    = document.getElementById("inc-tools-input").value.trim() || null;
+        var crewRaw  = document.getElementById("inc-crew-input").value.trim();
+        var crew     = crewRaw ? parseInt(crewRaw, 10) : null;
+        var mat      = document.getElementById("inc-material-select").value || null;
+
+        _setIncFormError("");
+
+        var cfg = INC_ACTIONS[_activePendingStatus] || INC_ACTIONS[targetSt];
+        if (cfg && cfg.needsNote && note.length < 5) {
+          _setIncFormError("Please enter at least 5 characters in \"What was done\".");
+          return;
+        }
+        if (note.length > 1000) {
+          _setIncFormError("Note must be 1000 characters or fewer.");
+          return;
+        }
+
+        _incSubmitting        = true;
+        newBtn.disabled       = true;
+        newBtn.textContent    = "Saving\u2026";
+
+        _incPost("/api/incidents/" + _activeIncidentId + "/status", {
+          status: targetSt, note: note || null,
+          tools_used: tools, crew_size: crew, actual_material: mat
+        }).then(function(updated) {
+          _incSubmitting = false;
+          document.getElementById("inc-action-form").style.display = "none";
+          /* Show inline success */
+          _showIncSaved(newBtn);
+          /* Update status pill and timeline without waiting for next poll */
+          if (updated && updated.status) {
+            var pill = document.getElementById("inc-status-pill");
+            pill.className   = "inc-status-pill " + (INC_STATUS_CLS[updated.status] || "inc-status-detected");
+            pill.textContent = INC_STATUS_LABEL[updated.status] || updated.status;
+          }
+          if (updated && updated.actions) {
+            _rebuildTimeline(updated.actions.slice(-5));
+          }
+          /* Full refresh so buttons and banners re-render from server */
+          refresh();
+        }).catch(function(err) {
+          _incSubmitting     = false;
+          newBtn.disabled    = false;
+          newBtn.textContent = "Submit";
+          if (err !== "unauthorized") {
+            _setIncFormError(typeof err === "string" ? err : "Could not save. Please try again.");
+          }
         });
       });
     }
 
-    /* Show / hide the inline action form for a given target status */
-    function _openActionForm(targetStatus, currentMaterial) {
-      var key = targetStatus;
-      /* "Reopen" is IN_PROGRESS when current status is COMPLETED */
-      var cfg = INC_ACTIONS[key] || INC_ACTIONS[key + "_reopen"] || INC_ACTIONS["IN_PROGRESS"];
-      /* Use the _reopen config when reopening (COMPLETED→IN_PROGRESS) */
-      if (key === "IN_PROGRESS" && _activePendingStatus === "IN_PROGRESS_reopen") {
-        cfg = INC_ACTIONS["IN_PROGRESS_reopen"];
-      }
+    /* ---- Wire the quick-note button ---- */
+    function _wireNoteHandler() {
+      var noteBtn = document.getElementById("inc-quick-note-btn");
+      var newBtn  = noteBtn.cloneNode(true);
+      noteBtn.parentNode.replaceChild(newBtn, noteBtn);
 
-      _activePendingStatus = targetStatus;
-
-      var form = document.getElementById("inc-action-form");
-      var title = document.getElementById("inc-action-form-title");
-      title.textContent = cfg.label;
-
-      /* Note field */
-      var noteField = document.getElementById("inc-field-note");
-      var noteReq   = document.getElementById("inc-note-required");
-      noteReq.style.display = cfg.needsNote ? "" : "none";
-
-      /* Optional fields */
-      document.getElementById("inc-field-tools").style.display    = cfg.showTools ? "" : "none";
-      document.getElementById("inc-field-crew").style.display     = cfg.showCrew  ? "" : "none";
-      document.getElementById("inc-field-material").style.display = cfg.showMat   ? "" : "none";
-
-      /* Pre-select the detected material */
-      if (cfg.showMat && currentMaterial) {
-        var sel = document.getElementById("inc-material-select");
-        for (var i = 0; i < sel.options.length; i++) {
-          if (sel.options[i].value === currentMaterial) {
-            sel.selectedIndex = i;
-            break;
+      newBtn.addEventListener("click", function() {
+        if (newBtn.disabled) return;
+        var noteEl  = document.getElementById("inc-quick-note");
+        var noteVal = noteEl.value.trim();
+        if (!noteVal) {
+          /* Show error near the button */
+          var errEl = document.getElementById("inc-quick-note-error");
+          if (errEl) {
+            errEl.textContent   = "Note must not be empty.";
+            errEl.style.display = "";
           }
+          return;
         }
+        if (noteVal.length > 1000) {
+          var errEl2 = document.getElementById("inc-quick-note-error");
+          if (errEl2) {
+            errEl2.textContent   = "Note must be 1000 characters or fewer.";
+            errEl2.style.display = "";
+          }
+          return;
+        }
+        /* Clear any previous error */
+        var errEl3 = document.getElementById("inc-quick-note-error");
+        if (errEl3) { errEl3.textContent = ""; errEl3.style.display = "none"; }
+
+        newBtn.disabled    = true;
+        newBtn.textContent = "Saving\u2026";
+
+        _incPost("/api/incidents/" + _activeIncidentId + "/notes", {note: noteVal})
+          .then(function(resp) {
+            noteEl.value = "";
+            _showIncSaved(newBtn);
+            /* Update timeline from the response without waiting for poll */
+            if (resp && resp.incident && resp.incident.recent_actions) {
+              _rebuildTimeline(resp.incident.recent_actions);
+            }
+          })
+          .catch(function(err) {
+            var errEl4 = document.getElementById("inc-quick-note-error");
+            if (errEl4) {
+              errEl4.textContent   = typeof err === "string" ? err : "Could not save. Please try again.";
+              errEl4.style.display = "";
+            }
+          })
+          .finally(function() {
+            newBtn.disabled    = false;
+            newBtn.textContent = "Add note";
+          });
+      });
+    }
+
+    /* Show a brief green "Saved" message next to a button */
+    function _showIncSaved(btn) {
+      var saved = document.createElement("span");
+      saved.textContent = " Saved";
+      saved.style.cssText =
+          "color:var(--normal);font-size:.82rem;font-weight:600;" +
+          "margin-left:8px;animation:none";
+      var parent = btn.parentNode;
+      if (parent) {
+        parent.appendChild(saved);
+        setTimeout(function() {
+          if (saved.parentNode) saved.parentNode.removeChild(saved);
+        }, 2500);
       }
+    }
 
-      /* Clear previous values */
-      document.getElementById("inc-note-input").value   = "";
-      document.getElementById("inc-tools-input").value  = "";
-      document.getElementById("inc-crew-input").value   = "";
-      document.getElementById("inc-form-error").style.display = "none";
-
-      form.style.display = "block";
-      document.getElementById("inc-note-input").focus();
+    function _rebuildLinks(incident) {
+      var linksEl = document.getElementById("inc-tl-links");
+      linksEl.textContent = "";
+      var histA = document.createElement("a");
+      histA.href        = "/incidents";
+      histA.textContent = "View full history";
+      linksEl.appendChild(histA);
+      var otherCount = incident.other_needs_followup || 0;
+      if (otherCount > 0) {
+        var followA = document.createElement("a");
+        followA.href = "/incidents?needs_followup=1";
+        followA.textContent = otherCount + " older incident" +
+                              (otherCount === 1 ? "" : "s") + " need follow-up";
+        linksEl.appendChild(followA);
+      }
     }
 
     /* ---- Update the recommended-action incident card ---- */
     function updateIncident(incident) {
       var card = document.getElementById("incident-card");
       if (!incident || !incident.plan) {
+        /* Show compact resolved card if incident is closed but no plan */
+        if (incident && incident.closed) {
+          _showResolvedCard(incident);
+          return;
+        }
         card.classList.remove("visible");
         _activeIncidentId = null;
         return;
       }
+
+      /* Closed incident — compact "Resolved" view */
+      if (incident.closed) {
+        _showResolvedCard(incident);
+        return;
+      }
+
       card.classList.add("visible");
       _activeIncidentId = incident.id;
 
@@ -2280,9 +2630,9 @@
       pill.textContent = INC_STATUS_LABEL[incident.status] || incident.status;
 
       /* Sensor-state banners */
-      document.getElementById("inc-banner-verified").style.display    = incident.verified    ? "" : "none";
-      document.getElementById("inc-banner-followup").style.display    = incident.needs_followup ? "" : "none";
-      document.getElementById("inc-banner-stillblocked").style.display= incident.still_blocked  ? "" : "none";
+      document.getElementById("inc-banner-verified").style.display     = incident.verified    ? "" : "none";
+      document.getElementById("inc-banner-followup").style.display     = incident.needs_followup ? "" : "none";
+      document.getElementById("inc-banner-stillblocked").style.display = incident.still_blocked  ? "" : "none";
 
       /* Title */
       document.getElementById("inc-title").textContent =
@@ -2291,9 +2641,9 @@
           " (" + (incident.location || "") + ")";
 
       /* Meta: material + confidence + detected time */
-      var metaEl   = document.getElementById("inc-meta");
-      metaEl.textContent = "";   /* clear safely */
-      var matSpan  = document.createElement("span");
+      var metaEl = document.getElementById("inc-meta");
+      metaEl.textContent = "";
+      var matSpan = document.createElement("span");
       matSpan.style.color      = MAT[incident.material] || "var(--text-muted)";
       matSpan.style.fontWeight = "700";
       matSpan.textContent      = incident.material || "Unknown";
@@ -2301,9 +2651,9 @@
       var confStr = (incident.confidence !== null && incident.confidence !== undefined)
                     ? " \u00b7 " + Math.round(incident.confidence * 100) + "% confidence"
                     : "";
-      var detAt   = incident.detected_at
-                    ? " \u00b7 Detected at " + fmtTime(incident.detected_at)
-                    : "";
+      var detAt = incident.detected_at
+                  ? " \u00b7 Detected at " + fmtTime(incident.detected_at)
+                  : "";
       metaEl.appendChild(document.createTextNode(confStr + detAt));
 
       /* Summary */
@@ -2350,13 +2700,14 @@
       /* Action buttons */
       var actRow = document.getElementById("inc-actions-row");
       actRow.textContent = "";
-      /* Hide form when rebuilding */
       document.getElementById("inc-action-form").style.display = "none";
+
       var allowed = incident.allowed_next || [];
       allowed.forEach(function(targetStatus) {
-        /* Determine if this IN_PROGRESS is a reopen */
         var cfgKey = targetStatus;
-        if (targetStatus === "IN_PROGRESS" && incident.status === "COMPLETED") {
+        /* "Reopen" label when COMPLETED or COULD_NOT_CLEAR → IN_PROGRESS */
+        if (targetStatus === "IN_PROGRESS" &&
+            (incident.status === "COMPLETED" || incident.status === "COULD_NOT_CLEAR")) {
           cfgKey = "IN_PROGRESS_reopen";
         }
         var cfg = INC_ACTIONS[cfgKey] || INC_ACTIONS[targetStatus];
@@ -2369,142 +2720,27 @@
         btn.addEventListener("click", function() {
           _activePendingStatus = cfgKey;
           _openActionForm(targetStatus, incident.material);
-          /* Scroll form into view */
           document.getElementById("inc-action-form").scrollIntoView(
-            {behavior: "smooth", block: "nearest"});
+              {behavior:"smooth", block:"nearest"});
         });
         actRow.appendChild(btn);
       });
 
-      /* Submit action form */
-      document.getElementById("inc-form-submit").onclick = function() {
-        var targetSt = _activePendingStatus === "IN_PROGRESS_reopen"
-                       ? "IN_PROGRESS" : _activePendingStatus;
-        var note     = document.getElementById("inc-note-input").value.trim();
-        var tools    = document.getElementById("inc-tools-input").value.trim() || null;
-        var crewRaw  = document.getElementById("inc-crew-input").value.trim();
-        var crew     = crewRaw ? parseInt(crewRaw, 10) : null;
-        var mat      = document.getElementById("inc-material-select").value || null;
-        var errEl    = document.getElementById("inc-form-error");
-        errEl.style.display = "none";
-
-        var cfgKey2 = _activePendingStatus;
-        var cfg2    = INC_ACTIONS[cfgKey2] || INC_ACTIONS[targetSt];
-        if (cfg2 && cfg2.needsNote && note.length < 5) {
-          errEl.textContent   = "Please enter at least 5 characters in \"What was done\".";
-          errEl.style.display = "";
-          return;
-        }
-
-        var submitBtn = document.getElementById("inc-form-submit");
-        submitBtn.disabled   = true;
-        submitBtn.textContent = "Saving…";
-
-        _incPost("/api/incidents/" + _activeIncidentId + "/status", {
-          status:          targetSt,
-          note:            note || null,
-          tools_used:      tools,
-          crew_size:       crew,
-          actual_material: mat
-        }).then(function(updated) {
-          document.getElementById("inc-action-form").style.display = "none";
-          /* Trigger an immediate refresh so the card reflects new state */
-          refresh();
-        }).catch(function(err) {
-          errEl.textContent   = typeof err === "string" ? err : "An error occurred.";
-          errEl.style.display = "";
-          submitBtn.disabled   = false;
-          submitBtn.textContent = "Submit";
-        });
-      };
-
-      /* Cancel action form */
+      /* Cancel button */
       document.getElementById("inc-form-cancel").onclick = function() {
         document.getElementById("inc-action-form").style.display = "none";
+        _incSubmitting = false;
       };
 
-      /* Quick note */
-      document.getElementById("inc-quick-note-btn").onclick = function() {
-        var noteVal = document.getElementById("inc-quick-note").value.trim();
-        if (!noteVal) return;
-        var btn = document.getElementById("inc-quick-note-btn");
-        btn.disabled   = true;
-        btn.textContent = "Saving…";
-        _incPost("/api/incidents/" + _activeIncidentId + "/notes", {note: noteVal})
-          .then(function() {
-            document.getElementById("inc-quick-note").value = "";
-            refresh();
-          })
-          .catch(function(err) {
-            alert(typeof err === "string" ? err : "Could not save note.");
-          })
-          .finally(function() {
-            btn.disabled   = false;
-            btn.textContent = "Add note";
-          });
-      };
+      /* Wire fresh submit + note handlers (clone removes stale listeners) */
+      _wireSubmitHandler(incident.material);
+      _wireNoteHandler();
 
-      /* Mini timeline of recent_actions (last 5, oldest first) */
-      var tlEl = document.getElementById("inc-timeline");
-      tlEl.textContent = "";
-      var actions = incident.recent_actions || [];
-      if (actions.length > 0) {
-        var tlLabel = document.createElement("div");
-        tlLabel.className   = "section-label";
-        tlLabel.style.marginBottom = "8px";
-        tlLabel.textContent = "Recent activity";
-        tlEl.appendChild(tlLabel);
-        actions.forEach(function(a) {
-          var item = document.createElement("div");
-          item.className = "inc-tl-item";
-          var dot  = document.createElement("div");
-          dot.className = "inc-tl-dot " + (a.action_type || "system").toLowerCase();
-          var body = document.createElement("div");
-          body.className = "inc-tl-body";
-          var txt  = document.createElement("div");
-          txt.className = "inc-tl-text";
-          /* Build the text safely with textContent only */
-          if (a.action_type === "STATUS" && a.from_status && a.to_status) {
-            txt.textContent = (INC_STATUS_LABEL[a.from_status] || a.from_status) +
-                              " \u2192 " +
-                              (INC_STATUS_LABEL[a.to_status] || a.to_status) +
-                              (a.note ? ": " + a.note : "");
-          } else if (a.note) {
-            txt.textContent = a.note;
-          } else {
-            txt.textContent = a.action_type;
-          }
-          var who  = document.createElement("div");
-          who.className = "inc-tl-who";
-          var ts = a.created_at
-              ? new Date(a.created_at * 1000).toLocaleString([], {
-                  year:"numeric", month:"short", day:"numeric",
-                  hour:"2-digit", minute:"2-digit"})
-              : "";
-          who.textContent = (a.user_login || "system") + (ts ? " \u00b7 " + ts : "");
-          body.appendChild(txt);
-          body.appendChild(who);
-          item.appendChild(dot);
-          item.appendChild(body);
-          tlEl.appendChild(item);
-        });
-      }
+      /* Timeline */
+      _rebuildTimeline(incident.recent_actions || []);
 
-      /* Follow-up / history links */
-      var linksEl = document.getElementById("inc-tl-links");
-      linksEl.textContent = "";
-      var histA = document.createElement("a");
-      histA.href        = "/incidents";
-      histA.textContent = "View full history";
-      linksEl.appendChild(histA);
-      var otherCount = incident.other_needs_followup || 0;
-      if (otherCount > 0) {
-        var followA = document.createElement("a");
-        followA.href = "/incidents?needs_followup=1";
-        followA.textContent = otherCount + " older incident" +
-                              (otherCount === 1 ? "" : "s") + " need follow-up";
-        linksEl.appendChild(followA);
-      }
+      /* Links */
+      _rebuildLinks(incident);
     }
 
     /* ---- Show "no data" state ---- */

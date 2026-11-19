@@ -448,6 +448,7 @@
         <input type="text" id="quick-note" maxlength="1000" placeholder="Add a note…">
         <button class="btn" id="quick-note-btn">Add note</button>
       </div>
+      <div id="quick-note-error" style="font-size:.8rem;color:var(--critical);display:none;margin-top:4px"></div>
     </div>
   </div>
   {% endif %}
@@ -521,21 +522,23 @@ var CURRENT_MATERIAL = {{ incident.material | tojson }};
 var CSRF_TOKEN = (document.querySelector('meta[name="csrf-token"]') || {}).content || "";
 
 var INC_ACTIONS = {
-  "ACKNOWLEDGED":    { label:"Acknowledge",      needsNote:false, showMat:false, showTools:false, showCrew:false },
-  "IN_PROGRESS":     { label:"Start work",        needsNote:false, showMat:true,  showTools:true,  showCrew:true  },
-  "COMPLETED":       { label:"Mark completed",    needsNote:true,  showMat:true,  showTools:true,  showCrew:true  },
-  "COULD_NOT_CLEAR": { label:"Could not clear",   needsNote:true,  showMat:false, showTools:false, showCrew:false },
-  "FALSE_ALARM":     { label:"False alarm",        needsNote:true,  showMat:false, showTools:false, showCrew:false },
-  "IN_PROGRESS_reopen":{ label:"Reopen",          needsNote:true,  showMat:false, showTools:false, showCrew:false }
+  "ACKNOWLEDGED":       { label:"Acknowledge",    needsNote:false, showMat:false, showTools:false, showCrew:false },
+  "IN_PROGRESS":        { label:"Start work",     needsNote:false, showMat:true,  showTools:true,  showCrew:true  },
+  "COMPLETED":          { label:"Mark completed", needsNote:true,  showMat:true,  showTools:true,  showCrew:true  },
+  "COULD_NOT_CLEAR":    { label:"Could not clear",needsNote:true,  showMat:false, showTools:false, showCrew:false },
+  "FALSE_ALARM":        { label:"False alarm",    needsNote:true,  showMat:false, showTools:false, showCrew:false },
+  "IN_PROGRESS_reopen": { label:"Reopen",         needsNote:true,  showMat:false, showTools:false, showCrew:false }
 };
 var INC_STATUS_LABEL = {
   "DETECTED":"Detected","ACKNOWLEDGED":"Acknowledged","IN_PROGRESS":"In progress",
   "COMPLETED":"Completed","COULD_NOT_CLEAR":"Could not clear","FALSE_ALARM":"False alarm"
 };
 
-var _pendingStatus = null;
-var actionsRow = document.getElementById("actions-row");
+var _pendingStatus  = null;
+var _detSubmitting  = false;
+var actionsRow      = document.getElementById("actions-row");
 
+/* Robust POST helper: handles network failures and non-JSON responses */
 function _incPost(url, body) {
   return fetch(url, {
     method:"POST",
@@ -543,16 +546,40 @@ function _incPost(url, body) {
     body:JSON.stringify(body)
   }).then(function(r) {
     if (r.status === 401) { window.location.href = "/login"; return Promise.reject("unauthorized"); }
-    return r.json().then(function(d) {
-      if (!r.ok) return Promise.reject(d.error || "Server error");
-      return d;
+    return r.text().then(function(text) {
+      var data;
+      try { data = JSON.parse(text); } catch(e) { data = {}; }
+      if (!r.ok) return Promise.reject(data.error || "Could not save. Please try again.");
+      return data;
     });
+  }).catch(function(err) {
+    if (err === "unauthorized") return Promise.reject(err);
+    return Promise.reject(typeof err === "string" ? err : "Could not save. Please try again.");
   });
+}
+
+function _setDetailError(msg) {
+  var el = document.getElementById("form-error");
+  if (!el) return;
+  if (msg) { el.textContent = msg; el.style.display = ""; }
+  else      { el.textContent = ""; el.style.display = "none"; }
+}
+
+function _showDetailSaved(btn) {
+  var saved = document.createElement("span");
+  saved.textContent = " Saved";
+  saved.style.cssText = "color:var(--normal);font-size:.82rem;font-weight:600;margin-left:8px";
+  if (btn && btn.parentNode) {
+    btn.parentNode.appendChild(saved);
+    setTimeout(function() { if (saved.parentNode) saved.parentNode.removeChild(saved); }, 2500);
+  }
 }
 
 if (actionsRow) {
   ALLOWED_NEXT.forEach(function(targetStatus) {
-    var cfgKey = (targetStatus === "IN_PROGRESS" && CURRENT_STATUS === "COMPLETED")
+    /* Reopen label when IN_PROGRESS from a closed status */
+    var cfgKey = ((targetStatus === "IN_PROGRESS") &&
+                  (CURRENT_STATUS === "COMPLETED" || CURRENT_STATUS === "COULD_NOT_CLEAR"))
                  ? "IN_PROGRESS_reopen" : targetStatus;
     var cfg = INC_ACTIONS[cfgKey] || INC_ACTIONS[targetStatus];
     if (!cfg) return;
@@ -561,17 +588,25 @@ if (actionsRow) {
     btn.textContent = cfg.label;
     btn.addEventListener("click", function() {
       _pendingStatus = cfgKey;
-      var realTarget = targetStatus;
-      /* populate form */
       document.getElementById("action-form-title").textContent = cfg.label;
       document.getElementById("note-required").style.display = cfg.needsNote ? "" : "none";
       document.getElementById("field-tools").style.display    = cfg.showTools ? "" : "none";
       document.getElementById("field-crew").style.display     = cfg.showCrew  ? "" : "none";
       document.getElementById("field-material").style.display = cfg.showMat   ? "" : "none";
-      document.getElementById("note-input").value   = "";
-      document.getElementById("tools-input").value  = "";
-      document.getElementById("crew-input").value   = "";
-      document.getElementById("form-error").style.display = "none";
+      /* Pre-select material */
+      if (cfg.showMat) {
+        var sel = document.getElementById("material-select");
+        for (var i = 0; i < sel.options.length; i++) {
+          if (sel.options[i].value === CURRENT_MATERIAL) { sel.selectedIndex = i; break; }
+        }
+      }
+      document.getElementById("note-input").value  = "";
+      document.getElementById("tools-input").value = "";
+      document.getElementById("crew-input").value  = "";
+      _setDetailError("");
+      var submitBtn = document.getElementById("form-submit");
+      if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = "Submit"; }
+      _detSubmitting = false;
       document.getElementById("action-form").style.display = "block";
       document.getElementById("note-input").focus();
     });
@@ -582,31 +617,36 @@ if (actionsRow) {
 var formSubmit = document.getElementById("form-submit");
 if (formSubmit) {
   formSubmit.addEventListener("click", function() {
-    var targetSt  = _pendingStatus === "IN_PROGRESS_reopen" ? "IN_PROGRESS" : _pendingStatus;
-    var note      = document.getElementById("note-input").value.trim();
-    var tools     = document.getElementById("tools-input").value.trim() || null;
-    var crewRaw   = document.getElementById("crew-input").value.trim();
-    var crew      = crewRaw ? parseInt(crewRaw, 10) : null;
-    var mat       = document.getElementById("material-select").value || null;
-    var errEl     = document.getElementById("form-error");
-    errEl.style.display = "none";
+    if (_detSubmitting) return;
+    var targetSt = _pendingStatus === "IN_PROGRESS_reopen" ? "IN_PROGRESS" : _pendingStatus;
+    var note     = document.getElementById("note-input").value.trim();
+    var tools    = document.getElementById("tools-input").value.trim() || null;
+    var crewRaw  = document.getElementById("crew-input").value.trim();
+    var crew     = crewRaw ? parseInt(crewRaw, 10) : null;
+    var mat      = document.getElementById("material-select").value || null;
+    _setDetailError("");
     var cfg = INC_ACTIONS[_pendingStatus] || INC_ACTIONS[targetSt];
     if (cfg && cfg.needsNote && note.length < 5) {
-      errEl.textContent   = "Please enter at least 5 characters in \"What was done\".";
-      errEl.style.display = "";
+      _setDetailError("Please enter at least 5 characters in \"What was done\".");
       return;
     }
-    formSubmit.disabled   = true;
-    formSubmit.textContent = "Saving…";
+    if (note.length > 1000) { _setDetailError("Note must be 1000 characters or fewer."); return; }
+    _detSubmitting         = true;
+    formSubmit.disabled    = true;
+    formSubmit.textContent = "Saving\u2026";
     _incPost("/api/incidents/" + INC_ID + "/status", {
       status:targetSt, note:note||null, tools_used:tools, crew_size:crew, actual_material:mat
     }).then(function() {
-      window.location.reload();
+      _showDetailSaved(formSubmit);
+      /* Reload after brief delay so user sees "Saved" */
+      setTimeout(function() { window.location.reload(); }, 600);
     }).catch(function(err) {
-      errEl.textContent   = typeof err === "string" ? err : "An error occurred.";
-      errEl.style.display = "";
-      formSubmit.disabled   = false;
+      _detSubmitting         = false;
+      formSubmit.disabled    = false;
       formSubmit.textContent = "Submit";
+      if (err !== "unauthorized") {
+        _setDetailError(typeof err === "string" ? err : "Could not save. Please try again.");
+      }
     });
   });
 }
@@ -615,21 +655,37 @@ var formCancel = document.getElementById("form-cancel");
 if (formCancel) {
   formCancel.addEventListener("click", function() {
     document.getElementById("action-form").style.display = "none";
+    _detSubmitting = false;
   });
 }
 
 var quickNoteBtn = document.getElementById("quick-note-btn");
 if (quickNoteBtn) {
   quickNoteBtn.addEventListener("click", function() {
-    var val = document.getElementById("quick-note").value.trim();
-    if (!val) return;
-    quickNoteBtn.disabled   = true;
-    quickNoteBtn.textContent = "Saving…";
+    if (quickNoteBtn.disabled) return;
+    var val    = document.getElementById("quick-note").value.trim();
+    var errEl  = document.getElementById("quick-note-error");
+    if (errEl) { errEl.textContent = ""; errEl.style.display = "none"; }
+    if (!val) {
+      if (errEl) { errEl.textContent = "Note must not be empty."; errEl.style.display = ""; }
+      return;
+    }
+    if (val.length > 1000) {
+      if (errEl) { errEl.textContent = "Note must be 1000 characters or fewer."; errEl.style.display = ""; }
+      return;
+    }
+    quickNoteBtn.disabled    = true;
+    quickNoteBtn.textContent = "Saving\u2026";
     _incPost("/api/incidents/" + INC_ID + "/notes", {note:val}).then(function() {
-      window.location.reload();
+      document.getElementById("quick-note").value = "";
+      _showDetailSaved(quickNoteBtn);
+      setTimeout(function() { window.location.reload(); }, 600);
     }).catch(function(err) {
-      alert(typeof err === "string" ? err : "Could not save note.");
-      quickNoteBtn.disabled   = false;
+      if (errEl && err !== "unauthorized") {
+        errEl.textContent   = typeof err === "string" ? err : "Could not save. Please try again.";
+        errEl.style.display = "";
+      }
+      quickNoteBtn.disabled    = false;
       quickNoteBtn.textContent = "Add note";
     });
   });

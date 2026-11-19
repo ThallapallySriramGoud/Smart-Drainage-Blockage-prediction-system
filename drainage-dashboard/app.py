@@ -522,8 +522,10 @@ _SEV_ORDER = ["WARNING", "BLOCKAGE", "CRITICAL"]
 # Allowed status transitions.  Key = current status, value = set of reachable
 # next statuses.  Anything not listed returns 400.
 ALLOWED_MOVES = {
-    "DETECTED":        {"ACKNOWLEDGED", "IN_PROGRESS", "FALSE_ALARM"},
-    "ACKNOWLEDGED":    {"IN_PROGRESS",  "FALSE_ALARM"},
+    "DETECTED":        {"ACKNOWLEDGED", "IN_PROGRESS",
+                        "COMPLETED", "COULD_NOT_CLEAR", "FALSE_ALARM"},
+    "ACKNOWLEDGED":    {"IN_PROGRESS",
+                        "COMPLETED", "COULD_NOT_CLEAR", "FALSE_ALARM"},
     "IN_PROGRESS":     {"COMPLETED",    "COULD_NOT_CLEAR", "FALSE_ALARM"},
     "COULD_NOT_CLEAR": {"IN_PROGRESS"},
     "COMPLETED":       {"IN_PROGRESS"},   # re-open
@@ -586,6 +588,7 @@ def _active_incident_dict(region_id):
     """
     # Closed statuses – incidents with these never need follow-up
     _CLOSED = {"COMPLETED", "FALSE_ALARM", "COULD_NOT_CLEAR"}
+    _RECENT_CLOSED_WINDOW_S = 1800   # 30 minutes
 
     # Newest ACTIVE incident
     active = (Incident.query
@@ -603,8 +606,23 @@ def _active_incident_dict(region_id):
                 .order_by(Incident.id.desc())
                 .first())
 
-    # Pick the most relevant one (ACTIVE wins over followup)
-    inc = active if active is not None else followup
+    # Newest recently-closed incident (within last 30 min), only when there
+    # is no active or follow-up incident to show instead.
+    recent_closed = None
+    if active is None and followup is None:
+        cutoff_closed = time.time() - _RECENT_CLOSED_WINDOW_S
+        recent_closed = (Incident.query
+                         .filter(
+                             Incident.region_id == region_id,
+                             Incident.status.in_(_CLOSED),
+                             Incident.cleared_at >= cutoff_closed,
+                         )
+                         .order_by(Incident.id.desc())
+                         .first())
+
+    # Pick the most relevant one (ACTIVE > follow-up > recently closed)
+    inc = active if active is not None else (
+          followup if followup is not None else recent_closed)
     if inc is None:
         return None
 
@@ -653,6 +671,8 @@ def _incident_dict(inc):
         "detected_at":  inc.detected_at,
         "cleared_at":   inc.cleared_at,
         "plan":         plan_obj,
+        # True when the incident is in a terminal closed status
+        "closed": inc.status in {"COMPLETED", "FALSE_ALARM", "COULD_NOT_CLEAR"},
     }
     # Phase 3A: add computed workflow fields
     d.update(_incident_computed(inc))
@@ -1648,7 +1668,17 @@ def api_incident_notes(incident_id):
         user_login  = user.login_id,
     )
     db.session.commit()
-    return jsonify({"ok": True})
+
+    # Return the last 5 actions so the dashboard can update the timeline
+    # without a full page refresh.
+    last_5 = (IncidentAction.query
+              .filter_by(incident_id=inc.id)
+              .order_by(IncidentAction.created_at.desc())
+              .limit(5)
+              .all())
+    d = _incident_dict(inc)
+    d["recent_actions"] = [_action_dict(a) for a in reversed(last_5)]
+    return jsonify({"ok": True, "incident": d})
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Incident history pages (Phase 3C)
