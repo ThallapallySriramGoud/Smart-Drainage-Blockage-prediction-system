@@ -290,7 +290,6 @@
         </label>
         <button type="submit" class="btn primary">Apply</button>
         <a href="/incidents" class="btn">Reset</a>
-        <a href="/incidents.csv?{{ request.query_string.decode() }}" class="btn">Export CSV</a>
       </form>
     </div>
   </div>
@@ -309,8 +308,7 @@
             <th>Severity</th>
             <th>Status</th>
             <th>Sensors</th>
-            <th>Time to ack (min)</th>
-            <th>Time to complete (min)</th>
+            <th>Work</th>
             <th></th>
           </tr>
         </thead>
@@ -343,8 +341,28 @@
                 {{ inc.sensor_state.title() }}
               </span>
             </td>
-            <td class="ts-ack" data-detected="{{ inc.detected_at or '' }}" data-inc="{{ inc.id }}">—</td>
-            <td class="ts-comp" data-detected="{{ inc.detected_at or '' }}" data-inc="{{ inc.id }}">—</td>
+            <td class="inc-work-cell">
+              {%- set p = inc.progress if inc.progress else {} -%}
+              {%- if inc.status == 'FALSE_ALARM' -%}
+                <span style="color:var(--muted);font-size:.82rem">False alarm</span>
+              {%- elif inc.status == 'COULD_NOT_CLEAR' -%}
+                <span style="color:var(--critical);font-size:.82rem">Could not clear</span>
+              {%- elif inc.status == 'COMPLETED' -%}
+                <span style="color:var(--normal);font-size:.82rem">Completed{% if p.actual_minutes %} in {{ p.actual_minutes }} min{% endif %}</span>
+              {%- elif inc.status == 'IN_PROGRESS' -%}
+                {%- if p.overdue_minutes -%}
+                  <span style="color:var(--critical);font-size:.82rem">Overdue by {{ p.overdue_minutes }} min</span>
+                {%- elif p.minutes_left is not none -%}
+                  <span style="font-size:.82rem">Work in progress, ~{{ p.minutes_left }} min left</span>
+                {%- else -%}
+                  <span style="font-size:.82rem">Work in progress</span>
+                {%- endif -%}
+              {%- else -%}
+                <span style="color:var(--muted);font-size:.82rem">Waiting for work to start</span>
+              {%- endif -%}
+            </td>
+            <td class="ts-ack" data-detected="{{ inc.detected_at or '' }}" data-inc="{{ inc.id }}" style="display:none">—</td>
+            <td class="ts-comp" data-detected="{{ inc.detected_at or '' }}" data-inc="{{ inc.id }}" style="display:none">—</td>
             <td>
               <a href="/incidents/{{ inc.id }}" class="btn sm">View</a>
             </td>

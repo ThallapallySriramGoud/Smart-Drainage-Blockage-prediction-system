@@ -35,7 +35,7 @@ from flask import (
     url_for,
 )
 from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy import func
+from sqlalchemy import func, inspect as sa_inspect
 from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.security import check_password_hash, generate_password_hash
 
@@ -246,6 +246,14 @@ class Incident(db.Model):
     # JSON text – playbook plan at opening (or most recent update)
     plan                = db.Column(db.Text,        nullable=True)
     plan_updated_at     = db.Column(db.Float,       nullable=True)
+
+    # ── Work-tracking fields (added in Step 3; ensure_columns() handles ──────
+    # existing databases that do not yet have these columns)
+    work_started_at     = db.Column(db.Float,       nullable=True)
+    estimated_minutes   = db.Column(db.Integer,     nullable=True)
+    expected_done_at    = db.Column(db.Float,       nullable=True)
+    completed_at        = db.Column(db.Float,       nullable=True)
+    work_started_by     = db.Column(db.String(80),  nullable=True)
 
     region = db.relationship("Region")
 
@@ -560,9 +568,10 @@ def _incident_computed(inc):
     }
 
 
-def _action_dict(a):
-    """Serialise an IncidentAction row to a plain dict."""
-    return {
+def _action_dict(a, inc=None):
+    """Serialise an IncidentAction row to a plain dict.
+    Pass inc (the parent Incident) to include the friendly message."""
+    d = {
         "id":              a.id,
         "incident_id":     a.incident_id,
         "user_login":      a.user_login,
@@ -575,6 +584,9 @@ def _action_dict(a):
         "actual_material": a.actual_material,
         "created_at":      a.created_at,
     }
+    if inc is not None:
+        d["message"] = describe_action(a, inc)
+    return d
 
 
 def _active_incident_dict(region_id):
@@ -646,7 +658,7 @@ def _active_incident_dict(region_id):
 
     d = _incident_dict(inc)
     d["other_needs_followup"] = other_needs_followup
-    d["recent_actions"] = [_action_dict(a) for a in reversed(last_actions)]
+    d["recent_actions"] = [_action_dict(a, inc) for a in reversed(last_actions)]
     return d
 
 
@@ -671,15 +683,163 @@ def _incident_dict(inc):
         "detected_at":  inc.detected_at,
         "cleared_at":   inc.cleared_at,
         "plan":         plan_obj,
+        # Work-tracking timestamps
+        "work_started_at":   inc.work_started_at,
+        "estimated_minutes": inc.estimated_minutes,
+        "expected_done_at":  inc.expected_done_at,
+        "completed_at":      inc.completed_at,
+        "work_started_by":   inc.work_started_by,
         # True when the incident is in a terminal closed status
         "closed": inc.status in {"COMPLETED", "FALSE_ALARM", "COULD_NOT_CLEAR"},
     }
     # Phase 3A: add computed workflow fields
     d.update(_incident_computed(inc))
+    # Step 3: progress object
+    d["progress"] = _incident_progress(inc)
     return d
 
 
-def _refresh_plan(inc):
+def describe_action(action, inc):
+    """
+    Return a plain English sentence describing an IncidentAction.
+    The returned string is safe to display with textContent / autoescaping.
+    expected_done_at timestamps are intentionally omitted from the Python
+    string — they are formatted in the browser from data attributes.
+    """
+    login    = action.user_login or "system"
+    to_st    = action.to_status or ""
+    from_st  = action.from_status or ""
+    note_txt = action.note or ""
+
+    # SYSTEM events
+    if action.action_type == "SYSTEM":
+        n = note_txt.lower()
+        if "detected" in n and "severity" in n:
+            loc = inc.location or "unknown location"
+            sev = inc.severity or "BLOCKAGE"
+            return "Blockage detected at {} (severity {}).".format(loc, sev)
+        if "back to normal" in n or "sensors back" in n:
+            return "Sensors confirm the channel is flowing normally again."
+        if "severity escalated" in n:
+            return note_txt
+        if "material updated" in n:
+            return note_txt
+        if "plan generated" in n:
+            return note_txt
+        return note_txt
+
+    # STATUS transitions
+    if action.action_type == "STATUS":
+        if to_st == "ACKNOWLEDGED":
+            return "{} has seen the alert and will arrange the work.".format(login)
+        if to_st == "IN_PROGRESS":
+            est = inc.estimated_minutes or 0
+            if est:
+                return (
+                    "The work to clear the blockage has started ({}). "
+                    "It is expected to be completed within {} minutes.".format(login, est)
+                )
+            return "The work to clear the blockage has started ({}).".format(login)
+        if to_st == "COMPLETED":
+            base = "The work has been completed ({}).".format(login)
+            if inc.work_started_at and inc.completed_at:
+                actual = round((inc.completed_at - inc.work_started_at) / 60.0)
+                base += " Finished in {} minutes.".format(actual)
+                if inc.expected_done_at:
+                    overdue = round((inc.completed_at - inc.expected_done_at) / 60.0)
+                    if overdue <= 0:
+                        base += " Finished on time."
+                    else:
+                        base += " Finished {} minutes later than expected.".format(overdue)
+            return base
+        if to_st == "COULD_NOT_CLEAR":
+            return "The blockage could not be cleared: {}.".format(note_txt) if note_txt \
+                   else "The blockage could not be cleared."
+        if to_st == "FALSE_ALARM":
+            return "Marked as a false alarm: {}.".format(note_txt) if note_txt \
+                   else "Marked as a false alarm."
+        # Generic status change
+        return "{} changed status from {} to {}.".format(login, from_st, to_st)
+
+    # NOTE
+    if action.action_type == "NOTE":
+        return "{} added a note: {}".format(login, note_txt)
+
+    return note_txt
+
+
+def _incident_progress(inc):
+    """
+    Return the progress object: stage, steps, timing fields.
+    """
+    _CLOSED = {"COMPLETED", "FALSE_ALARM", "COULD_NOT_CLEAR"}
+    now = time.time()
+
+    # Stage
+    if inc.status == "COMPLETED":
+        stage = "COMPLETED"
+    elif inc.status == "COULD_NOT_CLEAR":
+        stage = "NOT_CLEARED"
+    elif inc.status == "FALSE_ALARM":
+        stage = "FALSE_ALARM"
+    elif inc.status == "IN_PROGRESS" or inc.work_started_at:
+        stage = "WORK_STARTED"
+    else:
+        stage = "DETECTED"
+
+    # Three steps
+    detected_done  = True   # always
+    started_done   = inc.work_started_at is not None
+    completed_done = inc.completed_at is not None or inc.status in ("COMPLETED",)
+
+    est_detail = None
+    if inc.estimated_minutes and inc.work_started_at:
+        est_detail = "Expected within {} minutes".format(inc.estimated_minutes)
+
+    steps = [
+        {
+            "key":   "detected",
+            "label": "Blockage detected",
+            "ts":    inc.detected_at,
+            "done":  True,
+        },
+        {
+            "key":    "started",
+            "label":  "Work started",
+            "ts":     inc.work_started_at,
+            "done":   started_done,
+            "detail": est_detail,
+        },
+        {
+            "key":   "completed",
+            "label": "Work completed",
+            "ts":    inc.completed_at,
+            "done":  completed_done,
+        },
+    ]
+
+    # Minutes left / overdue / actual
+    minutes_left    = None
+    overdue_minutes = None
+    actual_minutes  = None
+
+    if inc.status == "IN_PROGRESS" and inc.expected_done_at:
+        diff = round((inc.expected_done_at - now) / 60.0)
+        if diff >= 0:
+            minutes_left = diff
+        else:
+            overdue_minutes = abs(diff)
+
+    if inc.work_started_at and inc.completed_at:
+        actual_minutes = round((inc.completed_at - inc.work_started_at) / 60.0)
+
+    return {
+        "stage":           stage,
+        "steps":           steps,
+        "minutes_left":    minutes_left,
+        "overdue_minutes": overdue_minutes,
+        "actual_minutes":  actual_minutes,
+    }
     """Regenerate and store the playbook plan for an incident."""
     import json as _json
     plan_obj = get_plan(inc.material, inc.severity, inc.location)
@@ -1529,7 +1689,7 @@ def api_incident_detail(incident_id):
     d = _incident_dict(inc)
     d["plan"]     = plan_obj
     d["snapshot"] = snapshot_obj
-    d["actions"]  = [_action_dict(a) for a in actions]
+    d["actions"]  = [_action_dict(a, inc) for a in actions]
     return jsonify(d)
 
 
@@ -1605,6 +1765,35 @@ def api_incident_status(incident_id):
     old_status = inc.status
     inc.status = new_status
 
+    # ── Work-tracking timestamps ──────────────────────────────────────────
+    if new_status == "IN_PROGRESS":
+        import json as _json2
+        # Accept an optional estimated_minutes from the request; fall back to
+        # the plan's est_time_min, or a default of 45 minutes.
+        est_raw = body.get("estimated_minutes")
+        if est_raw is not None:
+            try:
+                est_raw = int(est_raw)
+            except (TypeError, ValueError):
+                est_raw = None
+            if est_raw is not None and not (5 <= est_raw <= 1440):
+                return jsonify({"error": "estimated_minutes must be between 5 and 1440"}), 400
+        if est_raw is None:
+            # Try to read from the saved plan
+            try:
+                plan_obj = _json2.loads(inc.plan) if inc.plan else {}
+                est_raw = plan_obj.get("est_time_min") or 45
+            except Exception:
+                est_raw = 45
+        inc.work_started_at   = now
+        inc.estimated_minutes = int(est_raw)
+        inc.expected_done_at  = now + int(est_raw) * 60
+        inc.work_started_by   = user.login_id
+        inc.completed_at      = None   # clear if reopening
+
+    elif new_status == "COMPLETED":
+        inc.completed_at = now
+
     # Update incident fields when material is confirmed via this action
     if actual_material and actual_material != "UNKNOWN":
         inc.material = actual_material
@@ -1631,7 +1820,7 @@ def api_incident_status(incident_id):
                .order_by(IncidentAction.created_at)
                .all())
     d = _incident_dict(inc)
-    d["actions"] = [_action_dict(a) for a in actions]
+    d["actions"] = [_action_dict(a, inc) for a in actions]
     return jsonify(d)
 
 
@@ -1677,7 +1866,73 @@ def api_incident_notes(incident_id):
               .limit(5)
               .all())
     d = _incident_dict(inc)
-    d["recent_actions"] = [_action_dict(a) for a in reversed(last_5)]
+    d["recent_actions"] = [_action_dict(a, inc) for a in reversed(last_5)]
+    return jsonify({"ok": True, "incident": d})
+
+
+@app.route("/api/incidents/<int:incident_id>/estimate", methods=["POST"])
+@login_required
+def api_incident_estimate(incident_id):
+    """
+    Update the estimated completion time while an incident is IN_PROGRESS.
+
+    Request JSON
+    ------------
+    estimated_minutes  (required, int 5-1440)
+    note               (optional)
+    """
+    if not _api_csrf_ok():
+        return jsonify({"error": "CSRF token missing or invalid"}), 403
+
+    user   = _current_user()
+    region = _region_for_session(user)
+    if region is None:
+        return jsonify({"error": "no region selected"}), 400
+
+    inc, err = _get_incident_for_region(incident_id, region)
+    if err:
+        return err
+
+    if inc.status != "IN_PROGRESS":
+        return jsonify({"error": "Estimate can only be updated while status is IN_PROGRESS"}), 400
+
+    body = request.get_json(silent=True) or {}
+    est_raw = body.get("estimated_minutes")
+    if est_raw is None:
+        return jsonify({"error": "estimated_minutes is required"}), 400
+    try:
+        est_raw = int(est_raw)
+    except (TypeError, ValueError):
+        return jsonify({"error": "estimated_minutes must be an integer"}), 400
+    if not (5 <= est_raw <= 1440):
+        return jsonify({"error": "estimated_minutes must be between 5 and 1440"}), 400
+
+    now = time.time()
+    inc.estimated_minutes = est_raw
+    inc.expected_done_at  = now + est_raw * 60
+
+    note_txt = "Estimated time updated: about {} more minutes.".format(est_raw)
+    extra_note = (body.get("note") or "").strip()
+    if extra_note:
+        note_txt += " " + extra_note
+
+    log_action(
+        incident_id = inc.id,
+        region_id   = region.id,
+        action_type = "NOTE",
+        note        = note_txt,
+        user_id     = user.id,
+        user_login  = user.login_id,
+    )
+    db.session.commit()
+
+    last_5 = (IncidentAction.query
+              .filter_by(incident_id=inc.id)
+              .order_by(IncidentAction.created_at.desc())
+              .limit(5)
+              .all())
+    d = _incident_dict(inc)
+    d["recent_actions"] = [_action_dict(a, inc) for a in reversed(last_5)]
     return jsonify({"ok": True, "incident": d})
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1802,14 +2057,6 @@ def _incident_stats(rows):
     }
 
 
-def _csv_safe(value):
-    """Prefix a cell with a single quote if it could be interpreted as a formula."""
-    s = str(value) if value is not None else ""
-    if s and s[0] in ("=", "+", "-", "@"):
-        return "'" + s
-    return s
-
-
 @app.route("/incidents")
 @login_required
 def incident_list():
@@ -1903,63 +2150,7 @@ def incident_detail(incident_id):
         all_materials=list(MATERIALS),
         note_required_for=list(_NOTE_REQUIRED_FOR),
         csrf_token=_csrf_token(),
-    )
-
-
-@app.route("/incidents.csv")
-@login_required
-def incident_csv():
-    """Download filtered incidents as CSV."""
-    import csv
-    import io
-    from datetime import date as _date
-
-    user, region_or_redirect = _incidents_region_or_redirect()
-    if user is None:
-        return region_or_redirect
-    region = region_or_redirect
-
-    q, _ = _build_incident_query(region, request.args)
-    rows  = q.order_by(Incident.id.desc()).all()
-
-    buf = io.StringIO()
-    writer = csv.writer(buf)
-    writer.writerow([
-        "ID", "Detected (UTC)", "Location", "Severity", "Status",
-        "Sensor state", "Material", "Confidence",
-        "Confirmed", "Peak depth B (cm)", "Min flow (L/min)",
-        "Cleared (UTC)",
-    ])
-    for r in rows:
-        def _fmt_ts(ts):
-            if ts is None:
-                return ""
-            return datetime.utcfromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")
-
-        writer.writerow([
-            _csv_safe(r.id),
-            _csv_safe(_fmt_ts(r.detected_at)),
-            _csv_safe(r.location),
-            _csv_safe(r.severity),
-            _csv_safe(r.status),
-            _csv_safe(r.sensor_state),
-            _csv_safe(r.material),
-            _csv_safe(round(r.material_confidence, 2) if r.material_confidence else ""),
-            _csv_safe(r.confirmed),
-            _csv_safe(round(r.peak_depth_b, 2) if r.peak_depth_b else ""),
-            _csv_safe(round(r.min_flow, 2) if r.min_flow else ""),
-            _csv_safe(_fmt_ts(r.cleared_at)),
-        ])
-
-    today = _date.today().strftime("%Y-%m-%d")
-    filename = "incidents-{}-{}.csv".format(region.code, today)
-    buf.seek(0)
-
-    from flask import Response
-    return Response(
-        buf.getvalue(),
-        mimetype="text/csv",
-        headers={"Content-Disposition": "attachment; filename={}".format(filename)},
+        describe_action=describe_action,
     )
 
 
@@ -3227,6 +3418,42 @@ def api_chat_history():
 
 with app.app_context():
     db.create_all()
+
+    # ── ensure_columns: add new Incident columns to existing databases ───────
+    # db.create_all() only creates missing tables, not missing columns.
+    # This function uses ALTER TABLE so both SQLite (local dev) and
+    # PostgreSQL (Render/Neon) are handled without a manual migration.
+    _NEW_COLS = [
+        ("work_started_at",   "FLOAT"),
+        ("estimated_minutes", "INTEGER"),
+        ("expected_done_at",  "FLOAT"),
+        ("completed_at",      "FLOAT"),
+        ("work_started_by",   "VARCHAR(80)"),
+    ]
+
+    def ensure_columns():
+        try:
+            inspector = sa_inspect(db.engine)
+            existing  = {c["name"] for c in inspector.get_columns(Incident.__tablename__)}
+            with db.engine.connect() as conn:
+                for col_name, col_type in _NEW_COLS:
+                    if col_name not in existing:
+                        try:
+                            conn.execute(
+                                db.text("ALTER TABLE {} ADD COLUMN {} {}".format(
+                                    Incident.__tablename__, col_name, col_type))
+                            )
+                            conn.commit()
+                            app.logger.info("ensure_columns: added %s %s", col_name, col_type)
+                        except Exception as col_exc:
+                            # "duplicate column" or concurrent worker — harmless
+                            app.logger.warning(
+                                "ensure_columns: %s skipped (%s)",
+                                col_name, type(col_exc).__name__)
+        except Exception as exc:
+            app.logger.warning("ensure_columns: inspection failed (%s)", type(exc).__name__)
+
+    ensure_columns()
 
     # Create admin if users table is empty and env vars are provided
     _admin_username = os.environ.get("ADMIN_USERNAME", "")

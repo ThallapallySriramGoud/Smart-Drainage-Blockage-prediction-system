@@ -180,6 +180,80 @@
       font-size:.72rem; color:var(--muted); background:var(--bg);
     }
 
+    /* ── Progress tracker ── */
+    .progress-tracker {
+      background:var(--card); border:1.5px solid var(--border);
+      border-radius:var(--r); box-shadow:var(--shadow-sm);
+      padding:20px 24px; margin-bottom:20px;
+    }
+    .pt-steps {
+      display:flex; align-items:flex-start; gap:0;
+    }
+    .pt-step {
+      display:flex; flex-direction:column; align-items:center;
+      flex:1; position:relative;
+    }
+    /* connecting line between steps */
+    .pt-step:not(:last-child)::after {
+      content:''; position:absolute; top:14px; left:50%; right:-50%;
+      height:2px; background:var(--border); z-index:0;
+    }
+    .pt-step.done:not(:last-child)::after { background:var(--water); }
+    .pt-circle {
+      width:28px; height:28px; border-radius:50%; border:2px solid var(--border);
+      background:var(--card); display:flex; align-items:center; justify-content:center;
+      font-size:.7rem; font-weight:700; color:var(--muted); position:relative; z-index:1;
+      flex-shrink:0;
+    }
+    .pt-step.done .pt-circle {
+      background:var(--water); border-color:var(--water); color:#fff;
+    }
+    .pt-step.active .pt-circle {
+      border-color:var(--water); color:var(--water);
+      box-shadow:0 0 0 3px rgba(37,99,235,.18);
+    }
+    .pt-label {
+      font-size:.75rem; font-weight:600; color:var(--muted);
+      text-align:center; margin-top:7px; line-height:1.3;
+    }
+    .pt-step.done .pt-label { color:var(--text); }
+    .pt-ts {
+      font-size:.7rem; color:var(--text-muted); text-align:center;
+      margin-top:3px;
+    }
+    .pt-detail {
+      font-size:.7rem; color:var(--muted); text-align:center;
+      margin-top:2px; max-width:120px;
+    }
+    #pt-countdown {
+      text-align:center; margin-top:12px;
+      font-size:.88rem; font-weight:600;
+    }
+    #pt-countdown.ok      { color:var(--water); }
+    #pt-countdown.overdue { color:var(--critical); }
+    .pt-actual {
+      text-align:center; margin-top:10px;
+      font-size:.82rem; color:var(--normal); font-weight:600;
+    }
+
+    /* ── Estimate update form ── */
+    .estimate-form {
+      margin-top:16px; padding:14px 16px; background:var(--bg);
+      border:1.5px solid var(--border); border-radius:10px;
+      display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap;
+    }
+    .estimate-form label {
+      font-size:.78rem; font-weight:600; color:var(--muted); display:block;
+      margin-bottom:4px;
+    }
+    .estimate-form input[type="number"] {
+      width:90px; padding:7px 10px; border:1.5px solid var(--border);
+      border-radius:8px; background:var(--card); color:var(--text);
+      font-family:var(--font-body); font-size:.88rem; outline:none;
+    }
+    .estimate-form input:focus { border-color:var(--water); }
+    .estimate-err { font-size:.78rem; color:var(--critical); margin-top:4px; }
+
     /* action UI (same pattern as dashboard) */
     .actions-row { display:flex; flex-wrap:wrap; gap:8px; margin-top:20px; }
     .btn {
@@ -256,6 +330,32 @@
 <div class="wrap">
   <div class="breadcrumb">
     <a href="/incidents">Incident history</a> › Incident #{{ incident.id }}
+  </div>
+
+  {# ── Progress tracker ── #}
+  {%- set p = computed.get('progress', {}) if computed is mapping else {} -%}
+  {%- set steps = p.steps if p.steps else [] -%}
+  <div class="progress-tracker">
+    <div class="pt-steps">
+      {%- for step in steps -%}
+      <div class="pt-step{% if step.done %} done{% elif loop.index == (steps|selectattr('done')|list|length + 1) %} active{% endif %}">
+        <div class="pt-circle">{% if step.done %}✓{% else %}{{ loop.index }}{% endif %}</div>
+        <div class="pt-label">{{ step.label }}</div>
+        {%- if step.ts %}
+        <div class="pt-ts"><span class="ts" data-ts="{{ step.ts }}">{{ step.ts }}</span></div>
+        {%- endif %}
+        {%- if step.detail %}
+        <div class="pt-detail">{{ step.detail }}</div>
+        {%- endif %}
+      </div>
+      {%- endfor %}
+    </div>
+    {%- if incident.status == 'IN_PROGRESS' and incident.expected_done_at %}
+    <div id="pt-countdown" class="ok" data-expected="{{ incident.expected_done_at }}">Calculating…</div>
+    {%- endif %}
+    {%- if p.actual_minutes is not none %}
+    <div class="pt-actual">Completed in {{ p.actual_minutes }} minutes</div>
+    {%- endif %}
   </div>
 
   {# ── Summary card ── #}
@@ -453,6 +553,23 @@
   </div>
   {% endif %}
 
+  {# ── Estimate form — only while IN_PROGRESS ── #}
+  {% if incident.status == 'IN_PROGRESS' %}
+  <div class="panel">
+    <div class="panel-body">
+      <div class="panel-title">Update time estimate</div>
+      <div class="estimate-form">
+        <div>
+          <label for="est-input">New estimate (minutes)</label>
+          <input type="number" id="est-input" min="5" max="1440" placeholder="45">
+        </div>
+        <button class="btn primary" id="est-btn">Update</button>
+      </div>
+      <div class="estimate-err" id="est-err" style="display:none"></div>
+    </div>
+  </div>
+  {% endif %}
+
   {# ── Full timeline ── #}
   <div class="panel">
     <div class="panel-body">
@@ -465,14 +582,7 @@
           <div class="tl-body">
             <div class="tl-text">
               <span class="tl-type tl-type-{{ a.action_type }}">{{ a.action_type }}</span>
-              {% if a.action_type == 'STATUS' and a.from_status and a.to_status %}
-                {{ a.from_status.replace('_',' ').title() }} → {{ a.to_status.replace('_',' ').title() }}
-                {% if a.note %}: {{ a.note }}{% endif %}
-              {% elif a.note %}
-                {{ a.note }}
-              {% else %}
-                {{ a.action_type }}
-              {% endif %}
+              {{ describe_action(a, incident) }}
             </div>
             {% if a.tools_used or a.crew_size or a.actual_material %}
             <div class="tl-extras">
@@ -512,6 +622,74 @@ document.querySelectorAll(".ts[data-ts]").forEach(function(el) {
     year:"numeric", month:"short", day:"numeric", hour:"2-digit", minute:"2-digit"
   });
 });
+
+/* ── Live countdown for the progress tracker ── */
+(function() {
+  var countdown = document.getElementById("pt-countdown");
+  if (!countdown) return;
+  var expected = parseFloat(countdown.getAttribute("data-expected") || "0");
+  if (!expected) return;
+
+  function updateCountdown() {
+    var diff = Math.round((expected - Date.now() / 1000) / 60);
+    if (diff >= 0) {
+      countdown.textContent = diff + " min left";
+      countdown.className = "ok";
+    } else {
+      countdown.textContent = "Overdue by " + Math.abs(diff) + " min";
+      countdown.className = "overdue";
+    }
+  }
+  updateCountdown();
+  setInterval(updateCountdown, 30000);
+})();
+
+/* ── Estimate update form ── */
+(function() {
+  var estBtn = document.getElementById("est-btn");
+  if (!estBtn) return;
+  var INC_ID     = {{ incident.id }};
+  var CSRF_TOKEN = (document.querySelector('meta[name="csrf-token"]') || {}).content || "";
+
+  estBtn.addEventListener("click", function() {
+    var val    = parseInt(document.getElementById("est-input").value.trim(), 10);
+    var errEl  = document.getElementById("est-err");
+    errEl.style.display = "none";
+
+    if (!val || val < 5 || val > 1440) {
+      errEl.textContent   = "Enter a number between 5 and 1440.";
+      errEl.style.display = "";
+      return;
+    }
+    estBtn.disabled    = true;
+    estBtn.textContent = "Saving…";
+
+    fetch("/api/incidents/" + INC_ID + "/estimate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-CSRF-Token": CSRF_TOKEN },
+      body: JSON.stringify({ estimated_minutes: val })
+    }).then(function(r) {
+      if (r.status === 401) { window.location.href = "/login"; return; }
+      return r.text().then(function(text) {
+        var d; try { d = JSON.parse(text); } catch(e) { d = {}; }
+        if (!r.ok) {
+          errEl.textContent   = d.error || "Could not save.";
+          errEl.style.display = "";
+          estBtn.disabled    = false;
+          estBtn.textContent = "Update";
+          return;
+        }
+        /* Reload to show updated countdown / detail */
+        setTimeout(function() { window.location.reload(); }, 400);
+      });
+    }).catch(function() {
+      errEl.textContent   = "Could not save. Please try again.";
+      errEl.style.display = "";
+      estBtn.disabled    = false;
+      estBtn.textContent = "Update";
+    });
+  });
+})();
 
 /* ── Incident action UI (mirrors the dashboard pattern) ── */
 var INC_ID = {{ incident.id }};
