@@ -1087,76 +1087,111 @@
     .tb-badge.show { display: block; }
 
     /* =====================================================================
-       BOTTOM TAB BAR
+       BOTTOM TAB BAR — pill, floating, responsive
        ===================================================================== */
     #tabbar {
       position: fixed;
-      bottom: 0; left: 0; right: 0;
       z-index: 200;
-      background: var(--card);
-      border-top: 1.5px solid var(--border);
-      box-shadow: 0 -4px 16px rgba(30,64,120,.08);
       display: flex;
       justify-content: center;
-      padding-bottom: env(safe-area-inset-bottom, 0px);
+      /* Pill appearance */
+      background: rgba(255,255,255,.70);
+      -webkit-backdrop-filter: blur(14px);
+      backdrop-filter: blur(14px);
+      border-radius: 999px;
+      border: 1.5px solid var(--border);
+      box-shadow: 0 4px 24px rgba(30,64,120,.14);
     }
     @media (prefers-color-scheme: dark) {
-      #tabbar { box-shadow: 0 -4px 16px rgba(0,0,0,.3); }
+      #tabbar {
+        background: rgba(19,28,46,.72);
+        box-shadow: 0 4px 24px rgba(0,0,0,.4);
+      }
     }
+
+    /* ── Phone layout: centred at bottom ── */
+    @media (max-width: 768px) {
+      #tabbar {
+        bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+        left: 50%;
+        transform: translateX(-50%);
+        width: min(92vw, 440px);
+        padding: 6px 8px;
+      }
+      .tb-inner {
+        display: flex;
+        flex-direction: row;
+        width: 100%;
+      }
+      body { padding-bottom: calc(96px + env(safe-area-inset-bottom, 0px)); }
+      #tab-assistant {
+        height: calc(100dvh - 96px);
+        max-height: calc(100dvh - 96px);
+      }
+    }
+
+    /* ── Laptop layout: stacked on left side ── */
+    @media (min-width: 769px) {
+      #tabbar {
+        left: 16px;
+        top: 50%;
+        transform: translateY(-50%);
+        padding: 8px 6px;
+      }
+      .tb-inner {
+        display: flex;
+        flex-direction: column;
+        width: auto;
+      }
+      body { padding-left: 104px; padding-bottom: 0; }
+      #tab-assistant {
+        height: 100dvh;
+        max-height: 100dvh;
+      }
+    }
+
     .tb-inner {
-      display: flex;
-      width: 100%;
-      max-width: 720px;
+      /* base — overridden per breakpoint above */
     }
     .tb-btn {
-      flex: 1;
       display: flex;
       flex-direction: column;
       align-items: center;
       justify-content: center;
       gap: 3px;
       height: 64px;
+      width: 64px;
       border: none;
       background: transparent;
+      border-radius: 999px;
       cursor: pointer;
       color: var(--text-muted);
       font-family: var(--font-body);
       font-size: .68rem;
       font-weight: 600;
       position: relative;
-      transition: color .15s;
+      transition: color .15s, background .15s;
       -webkit-tap-highlight-color: transparent;
-    }
-    .tb-btn::before {
-      content: '';
-      position: absolute;
-      top: 0; left: 20%; right: 20%;
-      height: 2.5px;
-      border-radius: 0 0 3px 3px;
-      background: transparent;
-      transition: background .15s;
+      flex-shrink: 0;
     }
     .tb-btn[aria-selected="true"] {
       color: var(--water);
-    }
-    .tb-btn[aria-selected="true"]::before {
-      background: var(--water);
+      background: rgba(37,99,235,.14);
     }
     .tb-btn:focus-visible {
       outline: 2px solid var(--water);
       outline-offset: -2px;
     }
     @media (prefers-reduced-motion: reduce) {
-      .tb-btn, .tb-btn::before { transition: none; }
+      .tb-btn { transition: none; }
     }
 
     /* Tab panels */
     [role="tabpanel"] { display: block; }
     [role="tabpanel"][hidden] { display: none; }
 
-    /* Extra bottom clearance so content clears the tab bar */
+    /* Extra bottom clearance — overridden per breakpoint above */
     .hero, .content { padding-bottom-extra: 0; }
-    body { padding-bottom: calc(64px + env(safe-area-inset-bottom, 0px)); }
 
     /* =====================================================================
        CHAT WIDGET — Phase 4B
@@ -1168,9 +1203,7 @@
     #tab-assistant {
       display: flex;
       flex-direction: column;
-      /* Fill available viewport between hero header and tab bar */
-      height: calc(100dvh - 64px);
-      max-height: calc(100dvh - 64px);
+      /* Height set per breakpoint in the tab-bar section */
       overflow: hidden;
       background: var(--bg);
     }
