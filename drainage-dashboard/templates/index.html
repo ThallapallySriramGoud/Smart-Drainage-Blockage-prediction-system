@@ -1162,132 +1162,23 @@
        CHAT WIDGET — Phase 4B
        ===================================================================== */
 
-    /* ── Floating trigger button ── */
-    #chat-fab {
-      position: fixed;
-      bottom: 28px;
-      right: 28px;
-      z-index: 1100;
-      width: 56px;
-      height: 56px;
-      border-radius: 50%;
-      background: var(--water);
-      color: #fff;
-      border: none;
-      cursor: pointer;
-      box-shadow: 0 6px 24px rgba(37,99,235,.45);
+    /* =====================================================================
+       ASSISTANT TAB PANEL
+       ===================================================================== */
+    #tab-assistant {
       display: flex;
-      align-items: center;
-      justify-content: center;
-      transition: transform .2s, box-shadow .2s;
-    }
-    #chat-fab:hover {
-      transform: scale(1.07);
-      box-shadow: 0 8px 32px rgba(37,99,235,.55);
-    }
-    #chat-fab:focus-visible {
-      outline: 3px solid var(--water);
-      outline-offset: 3px;
-    }
-    @media (prefers-reduced-motion: reduce) {
-      #chat-fab { transition: none; }
-      #chat-panel { transition: none; }
-    }
-
-    /* ── Chat panel ── */
-    #chat-panel {
-      position: fixed;
-      bottom: 96px;
-      right: 28px;
-      z-index: 1100;
-      width: 360px;
-      height: 70vh;
-      max-height: 620px;
-      min-height: 300px;
-      background: var(--card);
-      border: 1.5px solid var(--border);
-      border-radius: 20px;
-      box-shadow: 0 20px 60px rgba(30,64,120,.20);
-      display: none;
       flex-direction: column;
+      /* Fill available viewport between hero header and tab bar */
+      height: calc(100dvh - 64px);
+      max-height: calc(100dvh - 64px);
       overflow: hidden;
-      transition: opacity .2s, transform .2s;
-      transform-origin: bottom right;
+      background: var(--bg);
     }
-    #chat-panel.open {
-      display: flex;
-      animation: chatPanelIn .2s ease both;
-    }
-    @keyframes chatPanelIn {
-      from { opacity: 0; transform: scale(.96) translateY(8px); }
-      to   { opacity: 1; transform: scale(1)  translateY(0); }
-    }
-    @media (prefers-reduced-motion: reduce) {
-      @keyframes chatPanelIn { from { opacity:1; } }
-    }
+    /* When hidden by the tab system, collapse completely */
+    #tab-assistant[hidden] { display: none; }
 
-    /* Full-width bottom sheet on small screens */
-    @media (max-width: 600px) {
-      #chat-panel {
-        width: 100%;
-        right: 0;
-        bottom: 0;
-        border-radius: 20px 20px 0 0;
-        max-height: 72vh;
-        height: 72vh;
-      }
-      #chat-fab {
-        bottom: 20px;
-        right: 20px;
-      }
-    }
-
-    /* ── Panel header ── */
-    #chat-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 14px 16px 12px;
-      border-bottom: 1.5px solid var(--border);
-      flex-shrink: 0;
-    }
-    #chat-header-title {
-      font-family: var(--font-head);
-      font-size: .95rem;
-      font-weight: 700;
-      color: var(--text);
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-    #chat-header-title::before {
-      content: '';
-      display: inline-block;
-      width: 8px;
-      height: 8px;
-      border-radius: 50%;
-      background: var(--water);
-    }
-    #chat-close-btn {
-      background: none;
-      border: none;
-      cursor: pointer;
-      color: var(--text-muted);
-      padding: 4px;
-      border-radius: 6px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      transition: color .15s, background .15s;
-    }
-    #chat-close-btn:hover { color: var(--text); background: var(--border); }
-    #chat-close-btn:focus-visible {
-      outline: 3px solid var(--water);
-      outline-offset: 2px;
-    }
-
-    /* ── Message list ── */
-    #chat-messages {
+    /* The message list scrolls; input is pinned at bottom */
+    #tab-assistant #chat-messages {
       flex: 1;
       overflow-y: auto;
       padding: 14px 14px 8px;
@@ -1297,7 +1188,35 @@
       scroll-behavior: smooth;
     }
     @media (prefers-reduced-motion: reduce) {
-      #chat-messages { scroll-behavior: auto; }
+      #tab-assistant #chat-messages { scroll-behavior: auto; }
+    }
+    #tab-assistant #chat-suggestions {
+      flex-shrink: 0;
+      padding: 0 14px 10px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 7px;
+    }
+    #tab-assistant #chat-input-row {
+      flex-shrink: 0;
+      padding: 10px 12px 12px;
+      border-top: 1.5px solid var(--border);
+      background: var(--card);
+      display: flex;
+      gap: 8px;
+      align-items: flex-end;
+      /* Keep above the on-screen keyboard */
+      position: sticky;
+      bottom: 0;
+    }
+    #tab-assistant #chat-footer-note {
+      flex-shrink: 0;
+      text-align: center;
+      font-size: .68rem;
+      color: var(--text-muted);
+      padding: 0 14px 10px;
+      background: var(--card);
+      line-height: 1.4;
     }
 
     .chat-msg {
@@ -3045,32 +2964,14 @@
     });
   </script>
 
-  <!-- ================================================================
-       CHAT WIDGET — Phase 4B
-       ================================================================ -->
+  <!-- ===================================================================
+       ASSISTANT TAB (Phase 4C: moved from floating popup into a tab panel)
+       =================================================================== -->
 
-  <!-- Floating action button -->
-  <button id="chat-fab" aria-label="Ask the assistant" aria-expanded="false" aria-controls="chat-panel">
-    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
-    </svg>
-  </button>
+  <section role="tabpanel" id="tab-assistant" aria-labelledby="tbtn-assistant" hidden>
 
-  <!-- Chat panel -->
-  <section id="chat-panel" role="dialog" aria-modal="true" aria-label="Drainage assistant" aria-hidden="true">
-    <!-- Header -->
-    <div id="chat-header">
-      <div id="chat-header-title">Drainage assistant</div>
-      <button id="chat-close-btn" aria-label="Close chat">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true">
-          <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
-        </svg>
-      </button>
-    </div>
-
-    <!-- Message list -->
+    <!-- Message list (kept id=chat-messages so the IIFE still works) -->
     <div id="chat-messages" role="log" aria-live="polite" aria-label="Chat messages">
-      <!-- messages inserted by JS -->
       <div id="chat-typing" aria-label="Assistant is typing" aria-hidden="true">
         <div class="chat-dot"></div>
         <div class="chat-dot"></div>
@@ -3106,75 +3007,47 @@
     <div id="chat-footer-note">
       AI can make mistakes. For safety decisions, follow your local procedure.
     </div>
-  </section>
+
+  </section><!-- /#tab-assistant -->
 
   <script>
   /* ================================================================
-     CHAT WIDGET — Phase 4B
-     All text is set with textContent only. No innerHTML on user data.
+     CHAT WIDGET — Phase 4C (tab panel, no popup)
+     All text set with textContent only. No innerHTML on user data.
      ================================================================ */
   (function () {
     "use strict";
 
-    var CSRF  = (document.querySelector('meta[name="csrf-token"]') || {}).content || "";
+    var CSRF      = (document.querySelector('meta[name="csrf-token"]') || {}).content || "";
     var MAX_CHARS = 500;
-    var SUGGESTIONS = [
-      "What is the current status?",
-      "What should we do about this blockage?",
-      "Which tools do we need?",
-      "Summarise recent incidents"
-    ];
 
-    /* ── DOM refs ── */
-    var fab        = document.getElementById("chat-fab");
-    var panel      = document.getElementById("chat-panel");
-    var closeBtn   = document.getElementById("chat-close-btn");
-    var msgList    = document.getElementById("chat-messages");
-    var typingEl   = document.getElementById("chat-typing");
-    var suggestEl  = document.getElementById("chat-suggestions");
-    var inputEl    = document.getElementById("chat-input");
-    var charCount  = document.getElementById("chat-char-count");
-    var sendBtn    = document.getElementById("chat-send-btn");
+    /* ── DOM refs (same ids as before) ── */
+    var msgList   = document.getElementById("chat-messages");
+    var typingEl  = document.getElementById("chat-typing");
+    var suggestEl = document.getElementById("chat-suggestions");
+    var inputEl   = document.getElementById("chat-input");
+    var charCount = document.getElementById("chat-char-count");
+    var sendBtn   = document.getElementById("chat-send-btn");
 
-    var historyLoaded  = false;
-    var isSending      = false;
-    var messageCount   = 0;   /* tracks whether the list is empty */
+    var historyLoaded = false;
+    var isSending     = false;
+    var messageCount  = 0;
 
-    /* ── Open / close ── */
-    function openPanel() {
-      panel.classList.add("open");
-      panel.setAttribute("aria-hidden", "false");
-      fab.setAttribute("aria-expanded", "true");
-      inputEl.focus();
+    /* Called by showTab("assistant") in the tab IIFE */
+    window._chatOnTabShown = function () {
       if (!historyLoaded) {
         historyLoaded = true;
         loadHistory();
+      } else {
+        scrollBottom();
       }
-    }
-
-    function closePanel() {
-      panel.classList.remove("open");
-      panel.setAttribute("aria-hidden", "true");
-      fab.setAttribute("aria-expanded", "false");
-      fab.focus();
-    }
-
-    fab.addEventListener("click", function () {
-      if (panel.classList.contains("open")) { closePanel(); } else { openPanel(); }
-    });
-    closeBtn.addEventListener("click", closePanel);
-
-    document.addEventListener("keydown", function (e) {
-      if (e.key === "Escape" && panel.classList.contains("open")) {
-        closePanel();
-      }
-    });
+      inputEl.focus();
+    };
 
     /* ── Suggestion chips ── */
     suggestEl.querySelectorAll(".chat-chip").forEach(function (btn) {
       btn.addEventListener("click", function () {
-        var text = btn.textContent;
-        inputEl.value = text;
+        inputEl.value = btn.textContent;
         updateCharCount();
         sendMessage();
       });
@@ -3205,10 +3078,9 @@
     });
     sendBtn.addEventListener("click", sendMessage);
 
-    /* ── Build a message bubble (textContent only) ── */
+    /* ── Append a message bubble (textContent only) ── */
     function appendMessage(role, text, ts, source) {
       messageCount++;
-      /* Hide suggestions once a message exists */
       suggestEl.style.display = "none";
 
       var wrap   = document.createElement("div");
@@ -3216,37 +3088,62 @@
 
       var bubble = document.createElement("div");
       bubble.className   = "chat-bubble";
-      bubble.textContent = text;   /* preserves \n via white-space:pre-wrap */
+      bubble.textContent = text;
 
       var meta = document.createElement("div");
       meta.className = "chat-msg-meta";
 
-      /* Timestamp */
       var timeEl = document.createElement("span");
       var d = ts ? new Date(ts * 1000) : new Date();
       timeEl.textContent = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
       meta.appendChild(timeEl);
 
-      /* Source badge (assistant only) */
       if (role === "assistant" && source) {
         var badge = document.createElement("span");
-        badge.className = "chat-source-badge" + (source === "fallback" ? " fallback" : "");
-        badge.textContent = source === "fallback" ? "Offline mode" : "AI";
+        /* Show "AI is not available right now" note for fallback; keep badge text short */
+        if (source === "fallback") {
+          badge.className   = "chat-source-badge fallback";
+          badge.textContent = "AI is not available right now";
+        } else {
+          badge.className   = "chat-source-badge";
+          badge.textContent = "AI";
+        }
         meta.appendChild(badge);
       }
 
       wrap.appendChild(bubble);
       wrap.appendChild(meta);
 
-      /* Insert before the typing indicator */
       msgList.insertBefore(wrap, typingEl);
       scrollBottom();
       return wrap;
     }
 
+    /* ── Append suggestion chips from an API reply ── */
+    function appendReplySuggestions(suggestions) {
+      if (!suggestions || suggestions.length === 0) return;
+      var row = document.createElement("div");
+      row.className = "chat-reply-chips";
+      row.style.cssText = "display:flex;flex-wrap:wrap;gap:7px;margin:4px 0 6px 0;";
+      suggestions.forEach(function (s) {
+        var chip = document.createElement("button");
+        chip.className   = "chat-chip";
+        chip.type        = "button";
+        chip.textContent = s;
+        chip.addEventListener("click", function () {
+          inputEl.value = s;
+          updateCharCount();
+          sendMessage();
+        });
+        row.appendChild(chip);
+      });
+      msgList.insertBefore(row, typingEl);
+      scrollBottom();
+    }
+
     function appendError(text) {
       var el = document.createElement("div");
-      el.className = "chat-error";
+      el.className   = "chat-error";
       el.textContent = text;
       msgList.insertBefore(el, typingEl);
       scrollBottom();
@@ -3277,7 +3174,7 @@
         return;
       }
 
-      isSending = true;
+      isSending        = true;
       sendBtn.disabled = true;
 
       appendMessage("user", text, null, null);
@@ -3288,17 +3185,11 @@
 
       fetch("/api/chat", {
         method:  "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-CSRF-Token": CSRF
-        },
-        body: JSON.stringify({ message: text })
+        headers: { "Content-Type": "application/json", "X-CSRF-Token": CSRF },
+        body:    JSON.stringify({ message: text })
       })
         .then(function (r) {
-          if (r.status === 401) {
-            window.location.href = "/login";
-            return Promise.reject("unauthorized");
-          }
+          if (r.status === 401) { window.location.href = "/login"; return Promise.reject("unauthorized"); }
           return r.json().then(function (d) {
             if (!r.ok) return Promise.reject({ status: r.status, data: d });
             return d;
@@ -3307,6 +3198,10 @@
         .then(function (d) {
           hideTyping();
           appendMessage("assistant", d.reply, null, d.source);
+          /* Show suggestion chips from the API reply if present */
+          if (d.suggestions && d.suggestions.length) {
+            appendReplySuggestions(d.suggestions);
+          }
         })
         .catch(function (err) {
           hideTyping();
@@ -3317,13 +3212,13 @@
           }
         })
         .finally(function () {
-          isSending    = false;
+          isSending        = false;
           sendBtn.disabled = false;
           inputEl.focus();
         });
     }
 
-    /* ── Load history when panel first opens ── */
+    /* ── Load history on first tab visit ── */
     function loadHistory() {
       showTyping();
       fetch("/api/chat/history")
@@ -3337,17 +3232,12 @@
           msgs.forEach(function (m) {
             appendMessage(m.role, m.text, m.created_at, m.source);
           });
-          /* Show suggestions if there were no previous messages */
-          if (msgs.length === 0) {
-            suggestEl.style.display = "";
-          }
+          if (msgs.length === 0) { suggestEl.style.display = ""; }
+          scrollBottom();
         })
         .catch(function (err) {
           hideTyping();
-          if (err !== "unauthorized") {
-            /* Silent: just show the empty state with suggestions */
-            suggestEl.style.display = "";
-          }
+          if (err !== "unauthorized") { suggestEl.style.display = ""; }
         });
     }
 
@@ -3402,6 +3292,15 @@
         </svg>
         Charts
       </button>
+      <button class="tb-btn" id="tbtn-assistant" role="tab"
+              aria-selected="false" aria-controls="tab-assistant"
+              onclick="showTab('assistant')">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none"
+             stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+        </svg>
+        Assistant
+      </button>
     </div>
   </nav>
 
@@ -3410,7 +3309,7 @@
      TAB BAR — showTab()
      ================================================================ */
   (function () {
-    var TABS   = ["home", "readings", "analysis", "charts"];
+    var TABS = ["home", "readings", "analysis", "charts", "assistant"];
 
     function showTab(name) {
       if (TABS.indexOf(name) === -1) name = "home";
@@ -3423,40 +3322,43 @@
         if (btn)   btn.setAttribute("aria-selected", active ? "true" : "false");
       });
 
-      /* Charts must be resized after their panel becomes visible because
-         Chart.js measures canvas size as 0 while the panel is hidden. */
+      /* Charts must be resized after their panel becomes visible */
       if (name === "charts") {
         setTimeout(function () {
           if (typeof depthChart !== "undefined" && depthChart) {
-            depthChart.resize();
-            depthChart.update("none");
+            depthChart.resize(); depthChart.update("none");
           }
           if (typeof flowChart !== "undefined" && flowChart) {
-            flowChart.resize();
-            flowChart.update("none");
+            flowChart.resize(); flowChart.update("none");
           }
         }, 50);
       }
 
-      /* Persist in URL hash without pushing a new history entry */
+      /* Assistant: load history on first visit and scroll to bottom */
+      if (name === "assistant") {
+        setTimeout(function () {
+          /* chatTabShown is set by the chat IIFE and loaded lazily */
+          if (typeof window._chatOnTabShown === "function") {
+            window._chatOnTabShown();
+          }
+        }, 30);
+      }
+
       if (history.replaceState) {
         history.replaceState(null, "", "#" + name);
       }
     }
 
-    /* Show from hash on load, or default to home */
     function initFromHash() {
       var hash = (location.hash || "#home").replace("#", "");
       showTab(hash);
     }
 
-    /* React to browser back/forward */
     window.addEventListener("hashchange", function () {
       var hash = (location.hash || "#home").replace("#", "");
       showTab(hash);
     });
 
-    /* Arrow-key navigation on the tab bar */
     document.getElementById("tabbar").addEventListener("keydown", function (e) {
       if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
       var focused = document.querySelector(".tb-btn:focus");
@@ -3472,7 +3374,6 @@
       }
     });
 
-    /* Expose globally so onclick attributes in the HTML can reach it */
     window.showTab = showTab;
     initFromHash();
   })();
