@@ -407,16 +407,63 @@
     }
 
     /* =====================================================================
-       METRIC TILES — overlap the hero bottom by 58px
+       METRIC TILES
        ===================================================================== */
+    /* #cards is the outer two-column layout on laptop, one-column on phone */
     #cards {
       display: grid;
-      grid-template-columns: repeat(5, 1fr);
       gap: 16px;
-      margin-top: -58px;             /* pulls tiles up into the hero */
+      margin-top: 24px;
       margin-bottom: 28px;
       position: relative;
       z-index: 10;
+    }
+    /* Laptop: left = 2×2 small cards, right = large cause card */
+    @media (min-width: 769px) {
+      #cards {
+        grid-template-columns: 1fr 1fr;
+        min-height: calc(100dvh - 180px);
+      }
+      #cards-small {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+        align-content: stretch;
+      }
+      #cards-small .card { flex: 1; }
+      #card-cause-card {
+        grid-column: 2;
+        grid-row: 1;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        min-height: 100%;
+      }
+      #card-cause-card .card-icon {
+        width: 52px;
+        height: 52px;
+        margin-bottom: 20px;
+      }
+      #card-cause-card .card-icon svg {
+        width: 26px;
+        height: 26px;
+      }
+      #card-cause-card .card-value {
+        font-size: 2.6rem;
+      }
+    }
+    /* Phone: cause card first, then 2×2 grid of small cards */
+    @media (max-width: 768px) {
+      #cards {
+        grid-template-columns: 1fr;
+      }
+      /* cause card comes first visually via order */
+      #card-cause-card { order: -1; }
+      #cards-small {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+      }
     }
 
     .card {
@@ -847,10 +894,17 @@
        ===================================================================== */
     .lower-row {
       display: grid;
-      grid-template-columns: 1fr 1.7fr;
-      gap: 20px;
+      grid-template-columns: 1fr 1.6fr;
+      gap: 16px;
       margin-bottom: 36px;
-      align-items: start;
+      align-items: stretch;
+    }
+    .lower-row > * { min-height: 0; }
+
+    /* Alert log scrollable inside its box */
+    #alerts-section .table-scroll-inner {
+      max-height: 340px;
+      overflow-y: auto;
     }
 
     /* ---- Material summary panel ---- */
@@ -990,16 +1044,13 @@
        RESPONSIVE
        ===================================================================== */
     @media (max-width: 1050px) {
-      #cards      { grid-template-columns: repeat(3, 1fr); }
       .lower-row  { grid-template-columns: 1fr; }
     }
     @media (max-width: 700px) {
-      #cards   { grid-template-columns: repeat(2, 1fr); }
       #charts  { grid-template-columns: 1fr; }
       .site-title h1 { font-size: 1.1rem; }
     }
     @media (max-width: 480px) {
-      #cards        { grid-template-columns: 1fr; }
       .hero-inner,
       .content      { padding-left: 14px; padding-right: 14px; }
     }
@@ -1610,6 +1661,8 @@
     <section role="tabpanel" id="tab-readings" aria-labelledby="tbtn-readings" hidden>
     <div id="cards">
 
+      <div id="cards-small">
+
       <!-- Flow -->
       <div class="card">
         <div class="card-icon">
@@ -1660,6 +1713,8 @@
         <span class="card-value" id="card-material">--</span>
         <span class="card-unit" id="card-material-detail">no data</span>
       </div>
+
+      </div><!-- /#cards-small -->
 
       <!-- Blockage cause -->
       <div class="card" id="card-cause-card">
@@ -1791,6 +1846,7 @@
       <!-- Alert log -->
       <div id="alerts-section" class="glass">
         <div class="section-label">Alert log</div>
+        <div class="table-scroll-inner">
         <table>
           <thead>
             <tr><th>Time</th><th>Level</th><th>Details</th></tr>
@@ -1799,6 +1855,7 @@
             <tr><td colspan="3" style="color:var(--text-muted)">No alerts yet</td></tr>
           </tbody>
         </table>
+        </div><!-- /.table-scroll-inner -->
       </div>
 
     </div><!-- /.lower-row -->
