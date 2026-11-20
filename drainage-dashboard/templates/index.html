@@ -1009,6 +1009,78 @@
     }
 
     /* =====================================================================
+       BOTTOM TAB BAR
+       ===================================================================== */
+    #tabbar {
+      position: fixed;
+      bottom: 0; left: 0; right: 0;
+      z-index: 200;
+      background: var(--card);
+      border-top: 1.5px solid var(--border);
+      box-shadow: 0 -4px 16px rgba(30,64,120,.08);
+      display: flex;
+      justify-content: center;
+      padding-bottom: env(safe-area-inset-bottom, 0px);
+    }
+    @media (prefers-color-scheme: dark) {
+      #tabbar { box-shadow: 0 -4px 16px rgba(0,0,0,.3); }
+    }
+    .tb-inner {
+      display: flex;
+      width: 100%;
+      max-width: 720px;
+    }
+    .tb-btn {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 3px;
+      height: 64px;
+      border: none;
+      background: transparent;
+      cursor: pointer;
+      color: var(--text-muted);
+      font-family: var(--font-body);
+      font-size: .68rem;
+      font-weight: 600;
+      position: relative;
+      transition: color .15s;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .tb-btn::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 20%; right: 20%;
+      height: 2.5px;
+      border-radius: 0 0 3px 3px;
+      background: transparent;
+      transition: background .15s;
+    }
+    .tb-btn[aria-selected="true"] {
+      color: var(--water);
+    }
+    .tb-btn[aria-selected="true"]::before {
+      background: var(--water);
+    }
+    .tb-btn:focus-visible {
+      outline: 2px solid var(--water);
+      outline-offset: -2px;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .tb-btn, .tb-btn::before { transition: none; }
+    }
+
+    /* Tab panels */
+    [role="tabpanel"] { display: block; }
+    [role="tabpanel"][hidden] { display: none; }
+
+    /* Extra bottom clearance so content clears the tab bar */
+    .hero, .content { padding-bottom-extra: 0; }
+    body { padding-bottom: calc(64px + env(safe-area-inset-bottom, 0px)); }
+
+    /* =====================================================================
        CHAT WIDGET — Phase 4B
        ===================================================================== */
 
@@ -1348,6 +1420,7 @@
     <div class="hero-inner">
 
       <!-- Header row -->
+      <section role="tabpanel" id="tab-home" aria-labelledby="tbtn-home">
       <header class="site-header">
         <div class="site-header-left">
           <div class="logo-tile">
@@ -1492,6 +1565,7 @@
           <text id="depth-c" x="570" y="368" text-anchor="middle" class="s-depth">-- cm</text>
         </svg>
       </div><!-- /#channel-section -->
+      </section><!-- /#tab-home -->
 
     </div><!-- /.hero-inner -->
   </div><!-- /.hero -->
@@ -1502,6 +1576,7 @@
   <div class="content">
 
     <!-- Metric tiles — negative margin pulls them into the hero -->
+    <section role="tabpanel" id="tab-readings" aria-labelledby="tbtn-readings" hidden>
     <div id="cards">
 
       <!-- Flow -->
@@ -1571,8 +1646,10 @@
       </div>
 
     </div><!-- /#cards -->
+    </section><!-- /#tab-readings -->
 
     <!-- Recommended action (incident playbook) — hidden when no active incident -->
+    <section role="tabpanel" id="tab-analysis" aria-labelledby="tbtn-analysis" hidden>
     <div id="incident-card">
       <div class="inc-header">
         <span id="inc-badge" class="inc-badge routine">ROUTINE</span>
@@ -1650,8 +1727,10 @@
       <!-- Follow-up / history links -->
       <div class="inc-tl-links" id="inc-tl-links"></div>
     </div>
+    </section><!-- /#tab-analysis -->
 
     <!-- Charts -->
+    <section role="tabpanel" id="tab-charts" aria-labelledby="tbtn-charts" hidden>
     <div id="charts">
       <div class="chart-box glass">
         <h3>Water depth over time (cm)</h3>
@@ -1697,6 +1776,7 @@
     <footer>
       Smart Drainage Blockage Detection and Material Identification System
     </footer>
+    </section><!-- /#tab-charts -->
 
   </div><!-- /.content -->
 
@@ -3128,6 +3208,127 @@
     /* Initialise char counter */
     updateCharCount();
   })();
+  </script>  <!-- ===================================================================
+       BOTTOM TAB BAR
+       =================================================================== -->
+  <nav id="tabbar" role="tablist" aria-label="Main navigation">
+    <div class="tb-inner">
+      <button class="tb-btn" id="tbtn-home" role="tab"
+              aria-selected="true" aria-controls="tab-home"
+              onclick="showTab('home')">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none"
+             stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+          <polyline points="9 22 9 12 15 12 15 22"/>
+        </svg>
+        Home
+      </button>
+      <button class="tb-btn" id="tbtn-readings" role="tab"
+              aria-selected="false" aria-controls="tab-readings"
+              onclick="showTab('readings')">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none"
+             stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <line x1="18" y1="20" x2="18" y2="10"/>
+          <line x1="12" y1="20" x2="12" y2="4"/>
+          <line x1="6"  y1="20" x2="6"  y2="14"/>
+        </svg>
+        Readings
+      </button>
+      <button class="tb-btn" id="tbtn-analysis" role="tab"
+              aria-selected="false" aria-controls="tab-analysis"
+              onclick="showTab('analysis')">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none"
+             stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="10"/>
+          <line x1="12" y1="8"  x2="12" y2="12"/>
+          <line x1="12" y1="16" x2="12.01" y2="16"/>
+        </svg>
+        Analysis
+      </button>
+      <button class="tb-btn" id="tbtn-charts" role="tab"
+              aria-selected="false" aria-controls="tab-charts"
+              onclick="showTab('charts')">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none"
+             stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+        </svg>
+        Charts
+      </button>
+    </div>
+  </nav>
+
+  <script>
+  /* ================================================================
+     TAB BAR — showTab()
+     ================================================================ */
+  (function () {
+    var TABS   = ["home", "readings", "analysis", "charts"];
+
+    function showTab(name) {
+      if (TABS.indexOf(name) === -1) name = "home";
+
+      TABS.forEach(function (t) {
+        var panel = document.getElementById("tab-" + t);
+        var btn   = document.getElementById("tbtn-" + t);
+        var active = (t === name);
+        if (panel) panel.hidden = !active;
+        if (btn)   btn.setAttribute("aria-selected", active ? "true" : "false");
+      });
+
+      /* Charts must be resized after their panel becomes visible because
+         Chart.js measures canvas size as 0 while the panel is hidden. */
+      if (name === "charts") {
+        setTimeout(function () {
+          if (typeof depthChart !== "undefined" && depthChart) {
+            depthChart.resize();
+            depthChart.update("none");
+          }
+          if (typeof flowChart !== "undefined" && flowChart) {
+            flowChart.resize();
+            flowChart.update("none");
+          }
+        }, 50);
+      }
+
+      /* Persist in URL hash without pushing a new history entry */
+      if (history.replaceState) {
+        history.replaceState(null, "", "#" + name);
+      }
+    }
+
+    /* Show from hash on load, or default to home */
+    function initFromHash() {
+      var hash = (location.hash || "#home").replace("#", "");
+      showTab(hash);
+    }
+
+    /* React to browser back/forward */
+    window.addEventListener("hashchange", function () {
+      var hash = (location.hash || "#home").replace("#", "");
+      showTab(hash);
+    });
+
+    /* Arrow-key navigation on the tab bar */
+    document.getElementById("tabbar").addEventListener("keydown", function (e) {
+      if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+      var focused = document.querySelector(".tb-btn:focus");
+      if (!focused) return;
+      var idx  = TABS.indexOf(focused.id.replace("tbtn-", ""));
+      var next = e.key === "ArrowRight"
+                 ? (idx + 1) % TABS.length
+                 : (idx - 1 + TABS.length) % TABS.length;
+      var nextBtn = document.getElementById("tbtn-" + TABS[next]);
+      if (nextBtn) {
+        nextBtn.focus();
+        showTab(TABS[next]);
+      }
+    });
+
+    /* Expose globally so onclick attributes in the HTML can reach it */
+    window.showTab = showTab;
+    initFromHash();
+  })();
   </script>
+
 </body>
 </html>
