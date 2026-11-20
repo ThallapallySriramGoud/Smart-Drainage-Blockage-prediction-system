@@ -1009,6 +1009,84 @@
     }
 
     /* =====================================================================
+       ACCOUNT BUTTON + DROPDOWN
+       ===================================================================== */
+    #acct-wrap {
+      position: relative;
+      flex-shrink: 0;
+    }
+    #acct-btn {
+      width: 36px; height: 36px;
+      border-radius: 50%;
+      background: var(--water);
+      color: #fff;
+      font-family: var(--font-head);
+      font-size: 1rem;
+      font-weight: 700;
+      border: none;
+      cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      transition: background .15s;
+    }
+    #acct-btn:hover { background: #1d4ed8; }
+    #acct-btn:focus-visible { outline: 3px solid var(--water); outline-offset: 3px; }
+
+    #acct-menu {
+      display: none;
+      position: absolute;
+      top: calc(100% + 8px);
+      right: 0;
+      min-width: 200px;
+      background: var(--card);
+      border: 1.5px solid var(--border);
+      border-radius: 12px;
+      box-shadow: var(--shadow);
+      z-index: 500;
+      overflow: hidden;
+    }
+    #acct-menu.open { display: block; }
+
+    .acct-id {
+      padding: 11px 16px 8px;
+      font-size: .78rem;
+      font-weight: 700;
+      color: var(--text-muted);
+      border-bottom: 1px solid var(--border);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .acct-link {
+      display: block;
+      padding: 10px 16px;
+      font-size: .88rem;
+      color: var(--text);
+      text-decoration: none;
+      font-family: var(--font-body);
+      font-weight: 500;
+      transition: background .12s;
+      white-space: nowrap;
+    }
+    .acct-link:hover { background: var(--border); }
+    .acct-link:focus-visible {
+      outline: 2px solid var(--water);
+      outline-offset: -2px;
+    }
+
+    /* =====================================================================
+       TAB BADGES
+       ===================================================================== */
+    .tb-badge {
+      position: absolute;
+      top: 8px; right: calc(50% - 18px);
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      border: 2px solid var(--card);
+      display: none;
+    }
+    .tb-badge.show { display: block; }
+
+    /* =====================================================================
        BOTTOM TAB BAR
        ===================================================================== */
     #tabbar {
@@ -1441,18 +1519,23 @@
         <div style="display:flex;align-items:center;gap:14px;flex-shrink:0;">
           <!-- connection-status id preserved exactly -->
           <span id="connection-status">Connecting...</span>
-          <a href="{{ url_for('change_password') }}"
-             style="font-size:.8rem;color:var(--text-muted);text-decoration:none;white-space:nowrap;">
-            Change password
-          </a>
-          <a href="/incidents"
-             style="font-size:.8rem;color:var(--text-muted);text-decoration:none;white-space:nowrap;">
-            History
-          </a>
-          <a href="{{ url_for('logout') }}"
-             style="font-size:.8rem;color:var(--text-muted);text-decoration:none;white-space:nowrap;">
-            Logout
-          </a>
+          <!-- Account button -->
+          <div id="acct-wrap">
+            <button id="acct-btn"
+                    aria-haspopup="true"
+                    aria-expanded="false"
+                    aria-label="Account menu"
+                    onclick="toggleAcctMenu(event)">{{ user.login_id[0] | upper if user else '?' }}</button>
+            <div id="acct-menu" role="menu" aria-label="Account options">
+              <div class="acct-id">{{ user.login_id if user else '' }}</div>
+              <a class="acct-link" href="{{ url_for('change_password') }}" role="menuitem">Change password</a>
+              <a class="acct-link" href="/incidents" role="menuitem">History</a>
+              {% if user and user.role == 'admin' %}
+              <a class="acct-link" href="{{ url_for('admin') }}" role="menuitem">Admin page</a>
+              {% endif %}
+              <a class="acct-link" href="{{ url_for('logout') }}" role="menuitem">Logout</a>
+            </div>
+          </div>
         </div>
       </header>
 
@@ -2884,6 +2967,36 @@
           updateCharts(history, config);
           updateAlerts(alerts);
           updateIncident(latest.incident || null);
+
+          /* ---- Tab badges ---- */
+          /* Home: coloured dot by sensor status */
+          (function() {
+            var b = document.getElementById("badge-home");
+            if (!b) return;
+            var s = latest.analysis ? latest.analysis.status : "NORMAL";
+            var colours = {
+              NORMAL:   null,
+              WARNING:  "var(--warning)",
+              BLOCKAGE: "var(--blockage)",
+              CRITICAL: "var(--critical)"
+            };
+            var col = colours[s];
+            if (col) {
+              b.style.background = col;
+              b.classList.add("show");
+            } else {
+              b.classList.remove("show");
+            }
+          })();
+          /* Analysis: red dot when an incident is active or needs follow-up */
+          (function() {
+            var b = document.getElementById("badge-analysis");
+            if (!b) return;
+            var inc = latest.incident;
+            var show = inc && (inc.sensor_state === "ACTIVE" || inc.needs_followup);
+            if (show) { b.classList.add("show"); }
+            else       { b.classList.remove("show"); }
+          })();
         })
         .catch(function() {
           var el = document.getElementById("connection-status");
@@ -2897,6 +3010,39 @@
     initCharts();
     refresh();
     setInterval(refresh, REFRESH_MS);
+
+    /* ---- Account menu ---- */
+    function toggleAcctMenu(e) {
+      e.stopPropagation();
+      var menu = document.getElementById("acct-menu");
+      var btn  = document.getElementById("acct-btn");
+      var open = menu.classList.toggle("open");
+      btn.setAttribute("aria-expanded", open ? "true" : "false");
+      if (open) {
+        /* focus first menu item */
+        var first = menu.querySelector(".acct-link");
+        if (first) first.focus();
+      }
+    }
+    document.addEventListener("click", function() {
+      var menu = document.getElementById("acct-menu");
+      var btn  = document.getElementById("acct-btn");
+      if (menu && menu.classList.contains("open")) {
+        menu.classList.remove("open");
+        btn.setAttribute("aria-expanded", "false");
+      }
+    });
+    document.addEventListener("keydown", function(e) {
+      if (e.key === "Escape") {
+        var menu = document.getElementById("acct-menu");
+        var btn  = document.getElementById("acct-btn");
+        if (menu && menu.classList.contains("open")) {
+          menu.classList.remove("open");
+          btn.setAttribute("aria-expanded", "false");
+          btn.focus();
+        }
+      }
+    });
   </script>
 
   <!-- ================================================================
@@ -3216,6 +3362,7 @@
       <button class="tb-btn" id="tbtn-home" role="tab"
               aria-selected="true" aria-controls="tab-home"
               onclick="showTab('home')">
+        <span class="tb-badge" id="badge-home"></span>
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none"
              stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
@@ -3237,6 +3384,7 @@
       <button class="tb-btn" id="tbtn-analysis" role="tab"
               aria-selected="false" aria-controls="tab-analysis"
               onclick="showTab('analysis')">
+        <span class="tb-badge" id="badge-analysis" style="background:var(--critical)"></span>
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none"
              stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <circle cx="12" cy="12" r="10"/>
