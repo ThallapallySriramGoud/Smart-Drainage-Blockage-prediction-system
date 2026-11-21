@@ -2287,6 +2287,66 @@ def change_password():
 # Admin page
 # ─────────────────────────────────────────────────────────────────────────────
 
+def build_region_summaries(regions):
+    """Return a list of dicts with a one-sentence status for each region."""
+    _OPEN = {"DETECTED", "ACKNOWLEDGED", "IN_PROGRESS"}
+    summaries = []
+    for region in regions:
+        # Newest incident that is open or sensor-active
+        inc = (Incident.query
+                .filter_by(region_id=region.id)
+                .filter(
+                    Incident.status.in_(_OPEN)
+                    | (Incident.sensor_state == "ACTIVE")
+                )
+                .order_by(Incident.detected_at.desc())
+                .first())
+        if inc is None:
+            summaries.append({"name": region.name, "level": "clear",
+                               "text": "In {}: all clear, no active problem.".format(region.name)})
+            continue
+
+        # Material phrasing
+        if inc.material == "Not identified" or not inc.material:
+            mat_phrase = "an unidentified"
+        else:
+            mat_phrase = "a " + inc.material
+
+        # Work part
+        if inc.work_started_by:
+            work_part = "Work started by {}.".format(inc.work_started_by)
+        else:
+            work_part = "Work has not started yet."
+
+        # Status words
+        _STATUS_WORDS = {
+            "DETECTED":        "detected, waiting for someone to acknowledge",
+            "ACKNOWLEDGED":    "acknowledged, work not started",
+            "IN_PROGRESS":     "work in progress",
+            "COMPLETED":       "work completed, waiting for sensors to confirm",
+            "COULD_NOT_CLEAR": "could not be cleared, needs help",
+            "FALSE_ALARM":     "marked as a false alarm",
+        }
+        status_words = _STATUS_WORDS.get(inc.status, inc.status)
+        if inc.status == "IN_PROGRESS" and inc.expected_done_at:
+            status_words += ", expected to finish around " + \
+                datetime.fromtimestamp(inc.expected_done_at).strftime("%H:%M")
+
+        text = "In {}: a {} blockage at {}. {} Status: {}.".format(
+            region.name, mat_phrase, inc.location, work_part, status_words)
+
+        # Level
+        if inc.severity == "CRITICAL" or inc.status == "COULD_NOT_CLEAR":
+            level = "urgent"
+        elif inc.status == "IN_PROGRESS":
+            level = "working"
+        else:
+            level = "waiting"
+
+        summaries.append({"name": region.name, "level": level, "text": text})
+    return summaries
+
+
 @app.route("/admin", methods=["GET", "POST"])
 @admin_required
 def admin():
@@ -2356,10 +2416,12 @@ def admin():
 
     regions = Region.query.order_by(Region.name).all()
     users   = User.query.order_by(User.login_id).all()
+    region_summaries = build_region_summaries(regions)
     return render_template(
         "admin.html", user=user, regions=regions, users=users,
         error=error, info=info, csrf_token=csrf,
         selected_region_id=session.get("admin_region_id"),
+        region_summaries=region_summaries,
     )
 
 # ─────────────────────────────────────────────────────────────────────────────
