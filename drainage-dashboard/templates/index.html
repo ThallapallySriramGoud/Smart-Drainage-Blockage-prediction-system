@@ -366,18 +366,34 @@
                   height .6s cubic-bezier(.25,.46,.45,.94);
     }
 
-    /* animated dashed flow connector lines */
+    /* Connector pipes — solid outline, light fill, no dashes */
     .connector {
-      fill: none;
+      fill: rgba(191,219,254,.18);
       stroke: #bfdbfe;
-      stroke-width: 2.5;
-      stroke-dasharray: 8 5;
-      animation: flow-dash 1.4s linear infinite;
+      stroke-width: 2;
     }
     .connector.warning { stroke: var(--warning); }
     .connector.danger  { stroke: var(--blockage); }
 
-    @keyframes flow-dash { to { stroke-dashoffset: -26; } }
+    /* Flowing water lanes inside the pipes */
+    .water-flow {
+      stroke: #60a5fa;
+      stroke-width: 5;
+      stroke-linecap: round;
+      stroke-dasharray: 2 16;
+      fill: none;
+      animation: water-flow-anim var(--flow-dur, 1.2s) linear infinite;
+    }
+    .water-flow.lane2 {
+      stroke: #93c5fd;
+      stroke-width: 4;
+      opacity: .7;
+      stroke-dasharray: 2 20;
+    }
+    @keyframes water-flow-anim { to { stroke-dashoffset: -36; } }
+    @media (prefers-reduced-motion: reduce) {
+      .water-flow, .water-flow.lane2 { animation: none; }
+    }
 
     .overflow-line {
       stroke: var(--critical);
@@ -1604,10 +1620,18 @@
           <line id="overflow-line" class="overflow-line" x1="40" y1="118" x2="680" y2="118"/>
           <text id="overflow-label" x="675" y="114" text-anchor="end" class="s-small" fill="#dc2626">overflow</text>
 
-          <!-- Connector segments — styled as animated dashed lines -->
+          <!-- Connector segments — water pipes with flowing lanes -->
           <rect id="seg-ab" class="connector" x="160" y="265" width="130" height="45" rx="8"/>
+          <line class="water-flow"        x1="162" y1="278" x2="288" y2="278" style="--flow-dur:1.2s"/>
+          <line class="water-flow lane2"   x1="162" y1="290" x2="288" y2="290" style="--flow-dur:1.2s"/>
+
           <rect id="seg-bc" class="connector" x="390" y="265" width="130" height="45" rx="8"/>
+          <line class="water-flow"        x1="392" y1="278" x2="518" y2="278" style="--flow-dur:1.2s"/>
+          <line class="water-flow lane2"   x1="392" y1="290" x2="518" y2="290" style="--flow-dur:1.2s"/>
+
           <rect id="seg-ac" class="connector" x="620" y="265" width="60"  height="45" rx="8"/>
+          <line class="water-flow"        x1="622" y1="278" x2="678" y2="278" style="--flow-dur:1.2s"/>
+          <line class="water-flow lane2"   x1="622" y1="290" x2="678" y2="290" style="--flow-dur:1.2s"/>
 
           <!-- Segment labels -->
           <text id="seg-label-ab" class="s-seg" x="225" y="258" text-anchor="middle"></text>
@@ -2064,6 +2088,37 @@
       var objDot   = document.getElementById("obj-dot");
       var objRing  = document.getElementById("obj-ring");
       var objLabel = document.getElementById("obj-label");
+
+      /* ── Water flow speed from the flow reading ── */
+      var flowVal  = (latest && latest.flow != null) ? latest.flow : 4.0;
+      var flowDur  = Math.max(1.2, Math.min(6, 1.2 * 4 / Math.max(flowVal, 0.5)));
+
+      /* Pipe element ids and their water-flow <line> children */
+      var pipeIds   = ["seg-ab", "seg-bc", "seg-ac"];
+      var locKeyMap = { "A-B": "seg-ab", "B-C": "seg-bc", "after C": "seg-ac" };
+
+      /* Reset all pipes to flow-based speed and full opacity */
+      pipeIds.forEach(function(pid) {
+        var rect = document.getElementById(pid);
+        if (rect) rect.style.setProperty("--flow-dur", flowDur + "s");
+        var lines = rect ? rect.parentNode.querySelectorAll(
+          '#' + pid + ' ~ .water-flow, #' + pid + ' + .water-flow') : [];
+        /* Simpler: query by parent SVG and position after the rect */
+      });
+      /* Set --flow-dur on every water-flow line grouped by pipe */
+      function setPipeDur(pipeId, dur, opacity) {
+        var rect = document.getElementById(pipeId);
+        if (!rect) return;
+        var svg = rect.parentNode;
+        /* The water-flow lines that immediately follow this rect */
+        var next = rect.nextElementSibling;
+        while (next && next.classList.contains("water-flow")) {
+          next.style.setProperty("--flow-dur", dur + "s");
+          if (opacity != null) next.style.opacity = opacity;
+          next = next.nextElementSibling;
+        }
+      }
+
       if (material && material.ir_detected) {
         var segX   = { "ab": 225, "bc": 455, "ac": 650 };
         var locKey = LOC_SEG[analysis.location] || "bc";
@@ -2071,13 +2126,36 @@
         objDot.setAttribute("cx", x);
         objRing.setAttribute("cx", x);
         objLabel.setAttribute("x", x);
+        /* Move the object dot into the blocked pipe (y ~ 287) */
+        objDot.setAttribute("cy", "287");
+        objRing.setAttribute("cy", "287");
+        objLabel.setAttribute("y", "278");
         objDot.setAttribute("opacity", "0.9");
         objRing.setAttribute("opacity", "0.6");
         objLabel.setAttribute("opacity", "1");
+
+        /* Slow the blocked pipe to a crawl (5s), trickle downstream (6s, low opacity) */
+        var blockedPipe = locKeyMap[analysis.location] || "seg-bc";
+        var pipeOrder = ["seg-ab", "seg-bc", "seg-ac"];
+        var blockIdx  = pipeOrder.indexOf(blockedPipe);
+        pipeOrder.forEach(function(pid, i) {
+          if (i === blockIdx) {
+            setPipeDur(pid, 5, null);
+          } else if (i > blockIdx) {
+            setPipeDur(pid, 6, "0.3");
+          } else {
+            setPipeDur(pid, flowDur, null);
+          }
+        });
       } else {
         objDot.setAttribute("opacity", "0");
         objRing.setAttribute("opacity", "0");
         objLabel.setAttribute("opacity", "0");
+        objDot.setAttribute("cy", "248");
+        objRing.setAttribute("cy", "248");
+        objLabel.setAttribute("y", "236");
+        /* Restore normal flow speed on all pipes */
+        pipeIds.forEach(function(pid) { setPipeDur(pid, flowDur, null); });
       }
     }
 
